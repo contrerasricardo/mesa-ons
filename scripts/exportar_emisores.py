@@ -3,7 +3,7 @@
 docs/data/emisores.json CIFRADO (AES-256-GCM, clave derivada con PBKDF2-SHA256 de la contraseña de la página).
 
 Corre en la laptop, no en GitHub Actions: los notebooks leen Research Corporativos.xlsx. Se usa después de actualizar el Excel.
-La contraseña se lee de la variable MESA_CLAVE o se pide por teclado; no se guarda en ningún lado.
+La contraseña: variable MESA_CLAVE, o el Llavero de macOS (servicio mesa-ons); la primera vez, una ventana la pide y la guarda ahí.
 Por emisor: sector, las cinco cualidades y el promedio (0 a 100), las métricas del cuadro, PD y TIR exigida contra la de
 mercado (05), el rango de puestos al sacar una cualidad por vez y si el orden es inestable; aparte, la lectura en HTML.
 No modifica los notebooks: el 06 se ejecuta con una corrección en memoria (columna «x» del cuadro 7 como float).
@@ -102,13 +102,47 @@ def descifrar(sobre, clave):
     return AESGCM(k).decrypt(d(sobre["iv"]), d(sobre["ct"]), None).decode()
 
 
+LLAVERO = ["-s", "mesa-ons", "-a", "pagina"]
+
+
+def ventana(texto):
+    """Ventana de macOS con campo oculto; None si se cancela."""
+    guion = (f'text returned of (display dialog "{texto}" default answer "" with hidden answer '
+             'with title "mesa-ons" buttons {"Cancelar", "OK"} default button "OK")')
+    r = subprocess.run(["osascript", "-e", guion], capture_output=True, text=True)
+    return r.stdout.rstrip("\n") if r.returncode == 0 else None
+
+
+def obtener_clave():
+    """MESA_CLAVE > Llavero de macOS > ventana para crearla (dos veces) y guardarla en el Llavero."""
+    if os.environ.get("MESA_CLAVE"):
+        return os.environ["MESA_CLAVE"]
+    r = subprocess.run(["security", "find-generic-password", *LLAVERO, "-w"], capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.rstrip("\n")
+    if sys.platform != "darwin":
+        return getpass.getpass("Contraseña de la página: ")
+    aviso = "Inventa la contraseña de la página (12 caracteres o más)."
+    while True:
+        clave = ventana(aviso)
+        if clave is None:
+            sys.exit("Cancelado: no se exportó nada.")
+        if len(clave) < 12:
+            aviso = "Muy corta: tiene que tener 12 caracteres o más."
+            continue
+        if ventana("Escríbela otra vez para confirmar.") != clave:
+            aviso = "No coincidieron. Inventa la contraseña otra vez (12 caracteres o más)."
+            continue
+        subprocess.run(["security", "add-generic-password", "-U", *LLAVERO, "-w", clave], check=True)
+        print("Contraseña guardada en el Llavero de macOS (mesa-ons); las próximas veces no se pide.")
+        return clave
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--publicar", action="store_true")
     a = ap.parse_args()
-    clave = os.environ.get("MESA_CLAVE") or getpass.getpass("Contraseña de la página: ")
-    if len(clave) < 12:
-        sys.exit("La contraseña tiene que tener 12 caracteres o más.")
+    clave = obtener_clave()
     datos = armar()
     texto = json.dumps(datos, ensure_ascii=False, separators=(",", ":"))
     sobre = cifrar(texto, clave)
