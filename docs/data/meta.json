@@ -1,0 +1,23 @@
+{
+ "cierre": "2026-11-03",
+ "liquidacion": "2026-11-04",
+ "generado": "2026-11-04T19:30:44+00:00",
+ "fuente": {
+  "mercado": "https://tablero.bymaeduca.com.ar/",
+  "cobro": "chamomberg.com > ISIN > BYMA",
+  "vivo": "data912.com (lo pide el navegador)"
+ },
+ "conteos": {
+  "ons.json": 210,
+  "pagos.json": 1280,
+  "soberanos.json": 35,
+  "pesos.json": 44
+ },
+ "ons_chamomberg": 121,
+ "sin_flujos": [
+  "GN37O",
+  "RZ9BO",
+  "SNABO",
+  "SNSBO"
+ ]
+}

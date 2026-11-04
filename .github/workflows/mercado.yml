@@ -1,0 +1,26 @@
+# Cierre de BYMA a docs/data/ cada día hábil. Corre a las 21:30 UTC (18:30 en Buenos Aires), después del cierre del tablero.
+# emisores.json no se toca acá: lo cifra y sube scripts/exportar_emisores.py desde la laptop.
+name: mercado
+on:
+  schedule:
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  exportar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/exportar_mercado.py
+      - name: commit si cambió el cierre
+        run: |
+          git config user.name "mesa-ons bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs/data
+          git diff --cached --quiet -- docs/data/ons.json docs/data/pagos.json docs/data/soberanos.json docs/data/pesos.json \
+            && echo "sin cierre nuevo" \
+            || { git commit -m "mercado: cierre $(python3 -c 'import json;print(json.load(open("docs/data/meta.json"))["cierre"])')" && git push; }
