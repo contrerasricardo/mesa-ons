@@ -2,7 +2,7 @@
 """Datos de mercado para la página: cierre del tablero de BYMA (tablero.bymaeduca.com.ar) a JSON en docs/data/.
 
 Escribe:
-  ons.json        ONs hard dollar (segmento «hd»): ley del ISIN, moneda de cobro (chamomberg > ISIN > BYMA), marca de
+  ons.json        ONs hard dollar (segmento «hd»; las de chamomberg que BYMA no trae, con los flujos de chamomberg.com): ley del ISIN, moneda de cobro (chamomberg > ISIN > BYMA), marca de
                   universo chamomberg (lo que distribuye Balanz), cupón, vencimiento, cierre y flujos por 100 de VN original.
   pagos.json      calendario de pagos de esas ONs (fecha, renta, amortización); `corte` queda reservado para la fecha de
                   corte de cupón, que BYMA no publica.
@@ -25,6 +25,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "docs/data"
 CHAMO = RAIZ / "data/reference/ons-chamomberg.csv"
 URL = "https://tablero.bymaeduca.com.ar/"
+CHAMO_WEB = "https://chamomberg.com/"
 
 
 def cargar():
@@ -45,6 +46,44 @@ def cobra_en(ticker, isin, byma, chamo):
     if isin and not isin.startswith("AR"):
         return "CCL", "ISIN"
     return byma, "BYMA"
+
+
+def flujos_chamomberg():
+    """ONs de los datos de chamomberg.com (on-arg-data y on_ny_data): {prefijo del ticker: objeto con `flows` por fecha}.
+    Sirve para las ONs que distribuye Balanz y que el tablero de BYMA no trae."""
+    principal = urllib.request.urlopen(urllib.request.Request(CHAMO_WEB, headers={"User-Agent": "Mozilla/5.0"}),
+                                       timeout=60).read().decode("utf-8", "ignore")
+    scripts = re.findall(r'src="/?((?:on-arg-data|on_ny_data)[^"]*\.js[^"]*)"', principal)
+    out = {}
+    for s in scripts:
+        texto = urllib.request.urlopen(urllib.request.Request(CHAMO_WEB + s, headers={"User-Agent": "Mozilla/5.0"}),
+                                       timeout=60).read().decode("utf-8", "ignore")
+        for m in re.finditer(r'"ticker":\s*"([A-Z0-9]+)"', texto):
+            i, prof = texto.rfind("{", 0, m.start()), 0
+            for j in range(i, len(texto)):
+                prof += (texto[j] == "{") - (texto[j] == "}")
+                if prof == 0:
+                    break
+            try:
+                o = json.loads(texto[i:j + 1])
+            except ValueError:
+                continue
+            if o.get("flows"):
+                out.setdefault(m.group(1)[:-1], o)
+    return out
+
+
+def desde_chamomberg(tk, o, fila, liq):
+    """ON armada con los flujos de chamomberg (fechas → días desde la liquidación del cierre de BYMA); sin precio de cierre."""
+    d0 = dt.date.fromisoformat(liq)
+    flujos = [[(dt.date.fromisoformat(f["date"]) - d0).days, f["amortization"], f["interest"], 0.0]
+              for f in o["flows"] if dt.date.fromisoformat(f["date"]) > d0]
+    return {"tk": tk, "emisor": o.get("company"), "clase": None, "isin": "",
+            "ley": "NY" if fila.get("tabla_chamomberg") == "Ley NY" else "ARG",
+            "moneda": "USD", "estructura": o.get("type"), "cupon": o.get("coupon"), "frecuencia": o.get("coupons"),
+            "vencimiento": o.get("maturity"), "vr": o.get("currentResidual"),
+            "cierre": {"px": None, "ytm": None, "dm": None, "adtv_usd": None, "fx": None, "fxr": None},
+            "tipo_flujos": "fix", "liq": liq, "flujos": redondear(flujos), "fuente_flujos": "chamomberg"}
 
 
 def redondear(flujos):
@@ -82,7 +121,23 @@ def main():
               "chamomberg": r["tk"] in chamo,
               "calificacion": (chamo.get(r["tk"]) or {}).get("calificacion_chamomberg") or None,
               "emitido": r.get("mto")}
+        o["fuente_flujos"] = "BYMA" if o["flujos"] else None
         ons.append(o)
+    en_byma = {o["tk"] for o in ons}
+    faltan = [tk for tk in chamo if tk not in en_byma]
+    sin_dato = []
+    if faltan:
+        extra = flujos_chamomberg()
+        for tk in faltan:
+            o = extra.get(tk[:-1])
+            if not o:
+                sin_dato.append(tk)
+                continue
+            fila = chamo[tk]
+            ons.append(desde_chamomberg(tk, o, fila, liq) | {
+                "sector": None, "cobra": fila.get("paga_chamomberg") or None, "fuente_cobro": "chamomberg",
+                "cobra_byma": None, "chamomberg": True, "calificacion": fila.get("calificacion_chamomberg") or None,
+                "emitido": None})
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
     pagos = []
@@ -108,7 +163,9 @@ def main():
             "fuente": {"mercado": URL, "cobro": "chamomberg.com > ISIN > BYMA", "vivo": "data912.com (lo pide el navegador)"},
             "conteos": {k: len(v) for k, v in archivos.items()},
             "ons_chamomberg": sum(o["chamomberg"] for o in ons),
-            "sin_flujos": [o["tk"] for o in ons if not o["flujos"]]}
+            "sin_flujos": [o["tk"] for o in ons if not o["flujos"]],
+            "flujos_chamomberg": [o["tk"] for o in ons if o.get("fuente_flujos") == "chamomberg"],
+            "chamomberg_sin_dato": sin_dato}
     meta_previa = SALIDA / "meta.json"
     if meta_previa.exists():  # emisores.json lo escribe otro script: no pisar su fecha
         previa = json.loads(meta_previa.read_text())
@@ -116,7 +173,8 @@ def main():
             meta["emisores"] = previa["emisores"]
     meta_previa.write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     print(f"cierre {fecha} · " + " · ".join(f"{k} {v}" for k, v in meta["conteos"].items())
-          + f" · chamomberg {meta['ons_chamomberg']} · sin flujos {meta['sin_flujos']}")
+          + f" · chamomberg {meta['ons_chamomberg']} (flujos de chamomberg: {len(meta['flujos_chamomberg'])})"
+          + f" · sin flujos {meta['sin_flujos']} · chamomberg sin dato {sin_dato}")
 
 
 if __name__ == "__main__":
