@@ -183,14 +183,15 @@ def main():
     tp = d["tp"]["rows"]
     soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"]}
                  for r in tp if r["me"] == "USD" and r["seg"] in ("sob", "pro")]
-    pesos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"]}
+    pesos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"], "emision": r.get("fe"), "pxa": r.get("pxa"), "par": r.get("par")}
              for r in tp if r["me"] == "ARS" and r["seg"] in ("lec", "fija", "cer", "tam", "dua")]
 
     SALIDA.mkdir(parents=True, exist_ok=True)
     archivos = {"ons.json": ons, "pagos.json": pagos, "soberanos.json": soberanos, "pesos.json": pesos}
     for nombre, datos in archivos.items():
         (SALIDA / nombre).write_text(json.dumps(datos, ensure_ascii=False, separators=(",", ":")))
-    meta = {"cierre": fecha, "liquidacion": liq, "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    cau = [x for x in d["din"]["cau"]["c"] if x is not None]
+    meta = {"cierre": fecha, "liquidacion": liq, "caucion_tna": cau[-1] / 100 if cau else None, "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "fuente": {"mercado": URL, "cobro": "chamomberg.com > ISIN > BYMA", "vivo": "data912.com (lo pide el navegador)"},
             "conteos": {k: len(v) for k, v in archivos.items()},
             "ons_chamomberg": sum(o["chamomberg"] for o in ons),

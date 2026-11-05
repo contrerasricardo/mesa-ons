@@ -1,0 +1,32 @@
+{
+ "_nota": "Supuestos del motor de la calculadora de pesos, los mismos de calc_pesos.ipynb (Bloque 2). Actualizar cada mes con el REM y cada año con los feriados.",
+ "rem_fecha": "REM sept-26 (publicado el 6-oct-2026)",
+ "rem_ipc_mensual": {"2026-09": 0.019, "2026-10": 0.017, "2026-11": 0.016, "2026-12": 0.018,
+                     "2027-01": 0.016, "2027-02": 0.016, "2027-03": 0.017},
+ "rem_ipc_largo_mensual": 0.016,
+ "rem_tamar_tna": {"2026-10": 0.236, "2026-11": 0.235, "2026-12": 0.235,
+                   "2027-01": 0.232, "2027-02": 0.226, "2027-03": 0.223},
+ "comision_baja": 0.001,
+ "comision_std": 0.005,
+ "caucion_comision_anual": 0.02,
+ "feriados": [
+  "2024-01-01", "2024-02-12", "2024-02-13", "2024-03-28", "2024-03-29", "2024-04-01", "2024-04-02", "2024-05-01",
+  "2024-06-17", "2024-06-20", "2024-06-21", "2024-07-09", "2024-10-11", "2024-11-18", "2024-12-25",
+  "2025-01-01", "2025-03-03", "2025-03-04", "2025-03-24", "2025-04-02", "2025-04-17", "2025-04-18", "2025-05-01", "2025-05-02",
+  "2025-06-16", "2025-06-20", "2025-07-09", "2025-08-15", "2025-10-10", "2025-11-21", "2025-11-24", "2025-12-08", "2025-12-25",
+  "2026-01-01", "2026-02-16", "2026-02-17", "2026-03-23", "2026-03-24", "2026-04-02", "2026-04-03", "2026-05-01", "2026-05-25",
+  "2026-06-15", "2026-07-09", "2026-07-10", "2026-08-17", "2026-10-12", "2026-11-23", "2026-12-07", "2026-12-08", "2026-12-25",
+  "2027-01-01", "2027-02-08", "2027-02-09", "2027-03-24", "2027-03-26", "2027-04-02"
+ ],
+ "_fichas": "Lo que el tablero de BYMA no trae: margen sobre TAMAR y la otra pata de los duales (ficha técnica de BYMA). margen null = inferido del cupón de BYMA del 29-oct-2026 (margen_inferido).",
+ "margen_inferido": {"TMF27": 0.07, "TML27": 0.055, "TMF28": 0.0, "TMG28": 0.07},
+ "fichas": {
+  "TMG27": {"margen_tamar": 0.06},
+  "TTD26": {"tem_fija_dual": 0.0214, "dual_cer": false},
+  "TXMJ8": {"margen_tamar": 0.03, "dual_cer": true},
+  "TXMJ9": {"margen_tamar": 0.03, "dual_cer": true},
+  "TXMD8": {"margen_tamar": 0.03, "dual_cer": true},
+  "TXMD9": {"margen_tamar": 0.03, "dual_cer": true},
+  "TXMJ0": {"margen_tamar": 0.03, "dual_cer": true}
+ }
+}
