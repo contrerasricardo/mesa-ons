@@ -178,18 +178,20 @@ def main():
         o["lamina"] = (extra.get(o["tk"][:-1]) or {}).get("min")
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
-    pagos = []
-    for o in ons:
-        d0 = dt.date.fromisoformat(o["liq"]) if o["liq"] else None
-        for dias, cap, renta, _ in o["flujos"]:
-            pagos.append({"fecha": (d0 + dt.timedelta(days=dias)).isoformat(), "tk": o["tk"], "emisor": o["emisor"],
-                          "ley": o["ley"], "cobra": o["cobra"], "renta": renta, "amortizacion": cap,
-                          "total": round(renta + cap, 6), "corte": None})
-    pagos.sort(key=lambda p: (p["fecha"], p["emisor"], p["tk"]))
-
     tp = d["tp"]["rows"]
     soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"]}
                  for r in tp if r["me"] == "USD" and r["seg"] in ("sob", "pro")]
+
+    # calendario de pagos: ONs, soberanos y provinciales en dólares (los bonos ley NY cobran cable, los de ley argentina MEP)
+    pagos = []
+    bonos = [(o, "on", o["cobra"]) for o in ons] + [(o, o["segmento"], "CCL" if o["ley"] == "NY" else "MEP") for o in soberanos]
+    for o, tipo, cobra in bonos:
+        d0 = dt.date.fromisoformat(o["liq"]) if o["liq"] else None
+        for dias, cap, renta, _ in o["flujos"]:
+            pagos.append({"fecha": (d0 + dt.timedelta(days=dias)).isoformat(), "tk": o["tk"], "emisor": o["emisor"], "tipo": tipo,
+                          "ley": o["ley"], "cobra": cobra, "renta": renta, "amortizacion": cap,
+                          "total": round(renta + cap, 6), "corte": None})
+    pagos.sort(key=lambda p: (p["fecha"], p["emisor"], p["tk"]))
     pesos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"], "emision": r.get("fe"), "pxa": r.get("pxa"), "par": r.get("par")}
              for r in tp if r["me"] == "ARS" and r["seg"] in ("lec", "fija", "cer", "tam", "dua")]
 

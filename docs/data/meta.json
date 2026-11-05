@@ -2,7 +2,7 @@
  "cierre": "2026-11-04",
  "liquidacion": "2026-11-05",
  "caucion_tna": 0.2248,
- "generado": "2026-11-05T15:00:13+00:00",
+ "generado": "2026-11-05T15:03:22+00:00",
  "fuente": {
   "mercado": "https://tablero.bymaeduca.com.ar/",
   "cobro": "chamomberg.com > ISIN > BYMA",
@@ -10,7 +10,7 @@
  },
  "conteos": {
   "ons.json": 232,
-  "pagos.json": 1410,
+  "pagos.json": 1971,
   "soberanos.json": 36,
   "pesos.json": 45
  },

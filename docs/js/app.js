@@ -335,10 +335,10 @@ function resultadoCalc(C) {
 }
 
 function pPagos() {
-  const id = "pagos", f = filtro(id, { q: "", h: "90", lista: false, ley: "", cobra: "" });
+  const id = "pagos", f = filtro(id, { q: "", h: "90", tipo: "", lista: false, ley: "", cobra: "" });
   const desde = hoyISO(), hasta = f.h ? mas(desde, +f.h) : "9999";
-  const porTk = new Map(E.ons.map(b => [b.tk, b]));
-  const filas = E.pagos.filter(p => p.cobro >= desde && p.cobro <= hasta && buscar(f.q, p.tk, p.emisor)
+  const porTk = new Map([...E.ons, ...E.soberanos].map(b => [b.tk, b]));
+  const filas = E.pagos.filter(p => p.cobro >= desde && p.cobro <= hasta && buscar(f.q, p.tk, p.emisor) && (!f.tipo || (p.tipo || "on") === f.tipo)
     && (!f.ley || p.ley === f.ley) && (!f.cobra || p.cobra === f.cobra) && (!f.lista || (porTk.has(p.tk) && enLista(porTk.get(p.tk)))));
   const mes = p => new Date(p.cobro + "T12:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
   const cols = [
@@ -353,6 +353,7 @@ function pPagos() {
   ];
   $("#p-pagos").replaceChildren(
     barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker o emisor">
+      <select name="tipo"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
       <select name="h"><option value="7">7 días</option><option value="30">30 días</option><option value="90">90 días</option><option value="180">6 meses</option><option value="365">12 meses</option><option value="">Todo</option></select>
       ${selLey}${selCobra}${chipLista}`),
     nota(`${filas.length} pagos · por 100 de VN original, en dólares · la fecha de corte de cupón todavía no está en la base`),
