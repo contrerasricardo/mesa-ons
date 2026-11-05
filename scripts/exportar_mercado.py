@@ -156,6 +156,19 @@ def main():
                     "tipo_flujos": "fix", "liq": liq, "flujos": redondear(flujos), "fuente_flujos": f["fuente"],
                     "sector": None, "cobra": f["cobra"], "fuente_cobro": f["fuente_cobro"], "cobra_byma": None,
                     "chamomberg": tk in chamo, "calificacion": None, "emitido": None})
+    # las que no vienen de BYMA traen el nombre corto de chamomberg: se usa el de BYMA del mismo prefijo de ticker
+    nombres = {}
+    for o in ons:
+        if o["fuente_flujos"] == "BYMA":
+            for n in (3, 2):
+                nombres.setdefault(o["tk"][:n], set()).add(o["emisor"])
+    for o in ons:
+        if o["fuente_flujos"] != "BYMA":
+            for n in (3, 2):
+                cand = nombres.get(o["tk"][:n], set())
+                if len(cand) == 1:
+                    o["emisor"] = next(iter(cand))
+                    break
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
     pagos = []

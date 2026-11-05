@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0f1419" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<title>Mesa de ONs</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%234a7ebb'/><path d='M7 22 13 15l5 4 7-9' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+<header class="barra">
+  <div class="titulo">
+    <strong>Mesa de ONs</strong>
+    <span id="estado" class="estado">cargando…</span>
+  </div>
+  <button id="btn-vivo" class="btn chico" type="button" title="Pedir las puntas en vivo a data912">Actualizar puntas</button>
+</header>
+<nav class="pestanas" role="tablist">
+  <button role="tab" data-p="ons" aria-selected="true">ONs</button>
+  <button role="tab" data-p="pagos">Pagos</button>
+  <button role="tab" data-p="soberanos">Soberanos</button>
+  <button role="tab" data-p="pesos">Pesos</button>
+  <button role="tab" data-p="pase">Pase</button>
+  <button role="tab" data-p="emisores">Emisores</button>
+</nav>
+<main>
+  <section id="p-ons" class="panel"></section>
+  <section id="p-pagos" class="panel" hidden></section>
+  <section id="p-soberanos" class="panel" hidden></section>
+  <section id="p-pesos" class="panel" hidden></section>
+  <section id="p-pase" class="panel" hidden></section>
+  <section id="p-emisores" class="panel" hidden></section>
+</main>
+<dialog id="ficha"></dialog>
+<dialog id="dlg-lista">
+  <form method="dialog" class="dlg">
+    <h3>Mi lista</h3>
+    <p class="nota">Tickers separados por coma, espacio o renglón (p. ej. YM38O, GD35). Se guarda solo en este dispositivo.</p>
+    <textarea id="txt-lista" rows="8" spellcheck="false" autocapitalize="characters"></textarea>
+    <div class="acciones"><button class="btn" value="cancelar">Cancelar</button><button class="btn primario" value="ok">Guardar</button></div>
+  </form>
+</dialog>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
