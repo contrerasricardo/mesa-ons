@@ -840,18 +840,18 @@ function resultadoMonedas(qC, qV) {
   const ars = M.de === "ARS" || M.a === "ARS";
   const tc = t => M.de === "ARS" ? 1 / t : t;
   const cj = t => M.de === "MEP" ? 1 / t - 1 : t - 1;
-  const cot = ars ? dato(`Tipo de cambio efectivo ($ por US$ ${M.a === "ARS" ? M.de : M.a})`, num(tc(tasa), 2))
-    + dato("Solo puntas, sin comisión", num(tc(tasaSin), 2))
-    : dato("Canje efectivo (MEP por cable − 1)", pct(cj(tasa))) + dato("Canje solo puntas", pct(cj(tasaSin)));
-  const d = M.de === "ARS" ? 2 : 4;
+  const en = (v, m, d = 2) => `${num(v, d)} <small class="cant">${m.sim}</small>`;
+  const cot = ars ? dato(`$ por US$ ${M.a === "ARS" ? M.de : M.a}`, num(tc(tasa), 2)) + dato("Sin comisión", num(tc(tasaSin), 2))
+    : dato("Canje", pct(cj(tasa))) + dato("Canje sin comisión", pct(cj(tasaSin)));
   return `
-      <div class="datos">
-        ${dato(`1 ${de.sim} =`, `${num(tasa, M.a === "ARS" ? 2 : M.de === "ARS" ? 6 : 4)} ${a.sim}`)}${dato(`1 ${a.sim} =`, `${num(1 / tasa, M.de === "ARS" ? 2 : M.a === "ARS" ? 6 : 4)} ${de.sim}`)}${cot}
-        ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} VN <small class="cant">a ${num(pc / 100, M.de === "ARS" ? 2 : 4)} c/u</small>`)}${dato("Pago con comisión", `${de.sim} ${num(costo, d)}`)}${dato("Sobra", `${de.sim} ${num(sobra, d)}`)}
-        ${dato(`Recibo neto (vendo ${esc(tkV)})`, `<b class="pos">${a.sim} ${num(recibo, M.a === "ARS" ? 2 : 4)}</b>`)}
-        ${dato("Comisiones, en destino", `${a.sim} ${num(bruto * (cc + cv), M.a === "ARS" ? 2 : 4)}`)}
+      <div class="datos mon">
+        ${dato(`1 ${de.sim} =`, en(tasa, a, M.a === "ARS" ? 2 : M.de === "ARS" ? 6 : 4))}${dato(`1 ${a.sim} =`, en(1 / tasa, de, M.de === "ARS" ? 2 : M.a === "ARS" ? 6 : 4))}${cot}
       </div>
-      <p class="nota">${esc(tkC)} a ${num(pc, M.de === "ARS" ? 2 : 3)} + ${pct(cc)} · ${esc(tkV)} a ${num(pv, M.a === "ARS" ? 2 : 3)} − ${pct(cv)} · precios por 100 VN, de a 1 VN · ${esc(fuente)}${dec(M.pc) != null || dec(M.pv) != null ? " (con precio a mano)" : ""}.</p>
+      <div class="datos mon">
+        ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} <small class="cant">VN a ${num(pc / 100, M.de === "ARS" ? 2 : 4)}</small>`)}${dato("Pago", en(costo, de))}${dato("Sobra", en(sobra, de))}
+        ${dato(`Recibo (${esc(tkV)})`, `<span class="pos">${en(recibo, a)}</span>`)}${dato("Comisiones", en(bruto * (cc + cv), a))}
+      </div>
+      <p class="nota">${esc(tkC)} a ${num(pc, M.de === "ARS" ? 2 : 3)} + ${pct(cc)} · ${esc(tkV)} a ${num(pv, M.a === "ARS" ? 2 : 3)} − ${pct(cv)} · precios por 100 VN, de a 1 VN · pago y recibo con comisión${ars ? "" : "; canje = MEP por cada cable − 1"} · ${esc(fuente)}${dec(M.pc) != null || dec(M.pv) != null ? " (con precio a mano)" : ""}.</p>
       <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;
 }
 

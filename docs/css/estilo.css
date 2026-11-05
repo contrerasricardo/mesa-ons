@@ -158,3 +158,6 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
   .ocultar-movil { display: none; }
 }
 h3.sub { margin: 14px 0 0; font-size: 15px; }
+.datos.mon { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.datos.mon b { white-space: nowrap; font-size: 14px; }
+.datos.mon .dato span { font-size: 10.5px; }
