@@ -23,7 +23,7 @@ const guardado = {
   escribir(k, v) { try { v == null ? localStorage.removeItem("mesa." + k) : localStorage.setItem("mesa." + k, JSON.stringify(v)); } catch { /* sin almacenamiento */ } },
 };
 
-const E = { meta: null, ons: [], soberanos: [], pesos: [], pagos: [], vivo: new Map(), horaVivo: null, errorVivo: null,
+const E = { meta: null, ons: [], soberanos: [], pesos: [], pagos: [], vivo: new Map(), vivoCI: new Map(), horaVivo: null, errorVivo: null,
   liq: liquidacionHoy(), lista: new Set(guardado.leer("lista", [])), orden: guardado.leer("orden", {}), emisores: null };
 
 // ---------- instrumentos ----------
@@ -85,8 +85,8 @@ async function cargar() {
 // Manda data912; BYMA completa la especie que data912 no trae o trae sin puntas, y queda sola si data912 no responde.
 const BYMA_LIBRE = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/";
 const conPuntas = q => q && (q.px_bid > 0 || q.px_ask > 0);
-function pedirBYMA(panel) {
-  const cuerpo = { excludeZeroPxAndQty: true, T0: false, T1: true, T2: false, page_number: 1, page_size: 5000, "Content-Type": "application/json" };
+function pedirBYMA(panel, ci = false) {
+  const cuerpo = { excludeZeroPxAndQty: true, T0: ci, T1: !ci, T2: false, page_number: 1, page_size: 5000, "Content-Type": "application/json" };
   return fetch(BYMA_LIBRE + panel, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo), cache: "no-store" })
     .then(x => x.json()).then(d => (d.data || d).map(r => ({ symbol: r.symbol, px_bid: r.bidPrice, px_ask: r.offerPrice, q_bid: r.quantityBid,
       q_ask: r.quantityOffer, c: r.trade, v: r.volume, fuente: "BYMA" })));
@@ -94,10 +94,13 @@ function pedirBYMA(panel) {
 async function pedirVivo() {
   const d912 = ["arg_corp", "arg_bonds", "arg_notes"], byma = ["negociable-obligations", "public-bonds"];
   $("#btn-vivo").disabled = true;
-  const [a, b] = await Promise.all([
+  const [a, b, ci] = await Promise.all([
     Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => x.json()))),
-    Promise.allSettled(byma.map(pedirBYMA))]);
+    Promise.allSettled(byma.map(p => pedirBYMA(p))),
+    pedirBYMA("public-bonds", true).catch(() => null)]);
   $("#btn-vivo").disabled = false;
+  // contado inmediato: solo BYMA lo publica (para el pase de monedas)
+  if (ci) E.vivoCI = new Map(ci.map(q => [q.symbol, q]));
   const okA = a.filter(x => x.status === "fulfilled"), okB = b.filter(x => x.status === "fulfilled");
   if (okA.length || okB.length) {
     const vivo = new Map(okB.flatMap(x => x.value.map(q => [q.symbol, q])));
@@ -685,9 +688,11 @@ function pPase() {
         <label class="campo">Reinversión de cupones % (vacío = TIR de venta)<input name="reinv" inputmode="decimal" value="${esc(P.reinv)}"></label>
       </div>
     </div>
-    <div id="res-pase"></div>`;
+    <div id="res-pase"></div>
+    <h3 class="sub">Pase de monedas</h3>
+    <div id="pase-mon"></div>`;
   el.querySelector("[name=linea]").value = P.linea;
-  el.querySelectorAll("[name]").forEach(c => c.addEventListener("change", () => {
+  el.querySelectorAll(".form-pase [name]").forEach(c => c.addEventListener("change", () => {
     if (c.name === "lamB" || c.name === "incB") guardarRegla(B, el.querySelector("[name=lamB]").value.trim(), el.querySelector("[name=incB]").value.trim());
     else P[c.name] = c.value.trim();
     if (c.name === "vendo") P.pv = ""; if (c.name === "compro") P.pc = "";
@@ -695,6 +700,7 @@ function pPase() {
     pPase();
   }));
   $("#res-pase").innerHTML = resultadoPase(A, B, vA, vB);
+  paseMonedas();
 }
 
 const dec = s => s === "" || s == null ? null : +String(s).replace(",", ".");
@@ -780,6 +786,73 @@ function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
       <tbody><tr><td>${fecha(E.liq)} (pase)</td><td class="n">—</td><td class="n">—</td><td class="n">${num(sobra)}</td><td class="n">—</td><td class="n">${num(sobra)}</td></tr>${tb}</tbody>
       <tfoot><tr><td><b>Hasta ${fecha(vtoA)}</b></td><td class="n"><b>${num(hastaA(fA, vnA))}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra)}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra - hastaA(fA, vnA))}</b></td><td></td><td></td></tr></tfoot></table></div>
       <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra.</p></details>`;
+}
+
+// Pase de monedas con un bono de las tres líneas: compro en la moneda que tengo (punta vendedora + comisión)
+// y vendo en la que quiero (punta compradora − comisión). 24 hs: puntas de data912/BYMA; CI: BYMA (20 min de demora).
+const MON = { ARS: { lin: "", nombre: "Pesos", sim: "$" }, MEP: { lin: "D", nombre: "Dólar MEP", sim: "US$ MEP" }, CCL: { lin: "C", nombre: "Dólar cable", sim: "US$ CCL" } };
+E.mon = { de: "ARS", a: "MEP", plazo: "24", bono: "AL30", monto: "1000000", cc: "0.5", cv: "0.5", pc: "", pv: "", ...guardado.leer("mon", {}) };
+function paseMonedas() {
+  const M = E.mon, cont = $("#pase-mon");
+  const libro = M.plazo === "CI" ? E.vivoCI : E.vivo;
+  const qC = libro.get(M.bono + MON[M.de].lin), qV = libro.get(M.bono + MON[M.a].lin);
+  const opc = sel => Object.entries(MON).map(([k, m]) => `<option value="${k}"${k === sel ? " selected" : ""}>${m.nombre}</option>`).join("");
+  cont.innerHTML = `
+    <div class="form-pase">
+      <div class="tarjeta"><h4>Tengo</h4>
+        <label class="campo">Moneda<select name="de">${opc(M.de)}</select></label>
+        <label class="campo">Monto en ${MON[M.de].sim}<input name="monto" inputmode="decimal" value="${esc(M.monto)}"></label>
+        <label class="campo">Compro ${esc(M.bono + MON[M.de].lin)} a, c/100 VN (punta vendedora${qC?.px_ask > 0 ? ": " + num(qC.px_ask, M.de === "ARS" ? 2 : 3) : ""})<input name="pc" inputmode="decimal" value="${esc(M.pc)}" placeholder="${qC?.px_ask > 0 ? qC.px_ask : ""}"></label>
+      </div>
+      <div class="tarjeta"><h4>Quiero</h4>
+        <label class="campo">Moneda<select name="a">${opc(M.a)}</select></label>
+        <label class="campo">Vendo ${esc(M.bono + MON[M.a].lin)} a, c/100 VN (punta compradora${qV?.px_bid > 0 ? ": " + num(qV.px_bid, M.a === "ARS" ? 2 : 3) : ""})<input name="pv" inputmode="decimal" value="${esc(M.pv)}" placeholder="${qV?.px_bid > 0 ? qV.px_bid : ""}"></label>
+      </div>
+      <div class="tarjeta"><h4>Supuestos</h4>
+        <div class="fila"><label class="campo">Bono<select name="bono">${["AL30", "GD30"].map(b => `<option${b === M.bono ? " selected" : ""}>${b}</option>`).join("")}</select></label>
+          <label class="campo">Plazo<select name="plazo"><option value="CI"${M.plazo === "CI" ? " selected" : ""}>CI</option><option value="24"${M.plazo === "24" ? " selected" : ""}>24 hs</option></select></label></div>
+        <div class="fila"><label class="campo">Comisión compra %<input name="cc" inputmode="decimal" value="${esc(M.cc)}"></label>
+          <label class="campo">Comisión venta %<input name="cv" inputmode="decimal" value="${esc(M.cv)}"></label></div>
+      </div>
+    </div>
+    <div class="tarjeta">${resultadoMonedas(qC, qV)}</div>`;
+  cont.querySelectorAll("[name]").forEach(c => c.addEventListener("change", () => {
+    M[c.name] = c.value.trim();
+    if (["de", "bono", "plazo"].includes(c.name)) M.pc = "";
+    if (["a", "bono", "plazo"].includes(c.name)) M.pv = "";
+    guardado.escribir("mon", { de: M.de, a: M.a, plazo: M.plazo, bono: M.bono, monto: M.monto, cc: M.cc, cv: M.cv });
+    paseMonedas();
+  }));
+}
+function resultadoMonedas(qC, qV) {
+  const M = E.mon, de = MON[M.de], a = MON[M.a], tkC = M.bono + de.lin, tkV = M.bono + a.lin;
+  if (M.de === M.a) return `<p class="nota">Elige dos monedas distintas.</p>`;
+  const pc = dec(M.pc) ?? (qC?.px_ask > 0 ? qC.px_ask : null), pv = dec(M.pv) ?? (qV?.px_bid > 0 ? qV.px_bid : null);
+  const fuente = M.plazo === "CI" ? "BYMA, contado inmediato, 20 min de demora" : "24 hs, data912 o BYMA";
+  if (!pc || !pv) return `<p class="nota aviso">Falta precio: ${!pc ? tkC + " sin punta vendedora" : ""} ${!pv ? tkV + " sin punta compradora" : ""} en ${M.plazo === "CI" ? "CI" : "24 hs"} (${fuente}). Actualiza las puntas o escríbelo a mano.</p>`;
+  const monto = dec(String(M.monto).replace(/\./g, "")), cc = (dec(M.cc) ?? 0) / 100, cv = (dec(M.cv) ?? 0) / 100;
+  if (!(monto > 0)) return `<p class="nota">Escribe el monto que tienes.</p>`;
+  const vn = redondearVN(monto / (pc / 100 * (1 + cc)), { min: 1, inc: 1 });
+  if (!vn) return `<p class="nota aviso">Con ${de.sim} ${num(monto)} no alcanza para 1 VN de ${tkC} (${num(pc / 100 * (1 + cc), 3)}).</p>`;
+  const costo = vn * pc / 100 * (1 + cc), sobra = monto - costo, recibo = vn * pv / 100 * (1 - cv), bruto = vn * pv / 100;
+  const tasa = recibo / costo, tasaSin = pv / pc;
+  // cotización legible: pesos por dólar si hay pesos de por medio; si no, el canje (dólares MEP por cada cable − 1)
+  const ars = M.de === "ARS" || M.a === "ARS";
+  const tc = t => M.de === "ARS" ? 1 / t : t;
+  const cj = t => M.de === "MEP" ? 1 / t - 1 : t - 1;
+  const cot = ars ? dato(`Tipo de cambio efectivo ($ por US$ ${M.a === "ARS" ? M.de : M.a})`, num(tc(tasa), 2))
+    + dato("Solo puntas, sin comisión", num(tc(tasaSin), 2))
+    : dato("Canje efectivo (MEP por cable − 1)", pct(cj(tasa))) + dato("Canje solo puntas", pct(cj(tasaSin)));
+  const d = M.de === "ARS" ? 2 : 4;
+  return `
+      <div class="datos">
+        ${dato(`1 ${de.sim} =`, `${num(tasa, M.a === "ARS" ? 2 : M.de === "ARS" ? 6 : 4)} ${a.sim}`)}${dato(`1 ${a.sim} =`, `${num(1 / tasa, M.de === "ARS" ? 2 : M.a === "ARS" ? 6 : 4)} ${de.sim}`)}${cot}
+        ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} VN <small class="cant">a ${num(pc / 100, M.de === "ARS" ? 2 : 4)} c/u</small>`)}${dato("Pago con comisión", `${de.sim} ${num(costo, d)}`)}${dato("Sobra", `${de.sim} ${num(sobra, d)}`)}
+        ${dato(`Recibo neto (vendo ${esc(tkV)})`, `<b class="pos">${a.sim} ${num(recibo, M.a === "ARS" ? 2 : 4)}</b>`)}
+        ${dato("Comisiones, en destino", `${a.sim} ${num(bruto * (cc + cv), M.a === "ARS" ? 2 : 4)}`)}
+      </div>
+      <p class="nota">${esc(tkC)} a ${num(pc, M.de === "ARS" ? 2 : 3)} + ${pct(cc)} · ${esc(tkV)} a ${num(pv, M.a === "ARS" ? 2 : 3)} − ${pct(cv)} · precios por 100 VN, de a 1 VN · ${esc(fuente)}${dec(M.pc) != null || dec(M.pv) != null ? " (con precio a mano)" : ""}.</p>
+      <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;
 }
 
 // ---------- emisores ----------
