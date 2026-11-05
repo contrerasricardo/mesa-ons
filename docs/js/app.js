@@ -1,4 +1,4 @@
-// STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
+// STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
 import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js";
@@ -55,7 +55,7 @@ function calcularVivo(b, linea) {
   const fl = b.calculable ? alinear(b.flujos, b.liq, E.liq) : [];
   const ask = q.px_ask > 0 ? q.px_ask : null, bid = q.px_bid > 0 ? q.px_bid : null;
   const tAsk = fl.length && ask ? tir(fl, ask) : null, tBid = fl.length && bid ? tir(fl, bid) : null;
-  return { ask, bid, qAsk: ask ? q.q_ask : null, qBid: bid ? q.q_bid : null, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null,
+  return { ask, bid, qAsk: ask ? q.q_ask : null, qBid: bid ? q.q_bid : null, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null, fuente: q.fuente,
     dm: tAsk != null ? duration(fl, tAsk).modificada : null, flujos: fl };
 }
 
@@ -81,18 +81,34 @@ async function cargar() {
   E.pagos = pagos.filter(p => !fuera.has(p.tk)).map(p => ({ ...p, cobro: habilDesde(p.fecha) }));
 }
 
+// Puntas de dos fuentes a 24 hs: data912 (al momento) y BYMA Data abierto (oficial, con 20 minutos de demora).
+// Manda data912; BYMA completa la especie que data912 no trae o trae sin puntas, y queda sola si data912 no responde.
+const BYMA_LIBRE = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/";
+const conPuntas = q => q && (q.px_bid > 0 || q.px_ask > 0);
+function pedirBYMA(panel) {
+  const cuerpo = { excludeZeroPxAndQty: true, T0: false, T1: true, T2: false, page_number: 1, page_size: 5000, "Content-Type": "application/json" };
+  return fetch(BYMA_LIBRE + panel, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo), cache: "no-store" })
+    .then(x => x.json()).then(d => (d.data || d).map(r => ({ symbol: r.symbol, px_bid: r.bidPrice, px_ask: r.offerPrice, q_bid: r.quantityBid,
+      q_ask: r.quantityOffer, c: r.trade, v: r.volume, fuente: "BYMA" })));
+}
 async function pedirVivo() {
-  const fuentes = ["arg_corp", "arg_bonds", "arg_notes"];
+  const d912 = ["arg_corp", "arg_bonds", "arg_notes"], byma = ["negociable-obligations", "public-bonds"];
   $("#btn-vivo").disabled = true;
-  const r = await Promise.allSettled(fuentes.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => x.json())));
+  const [a, b] = await Promise.all([
+    Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => x.json()))),
+    Promise.allSettled(byma.map(pedirBYMA))]);
   $("#btn-vivo").disabled = false;
-  const ok = r.filter(x => x.status === "fulfilled");
-  if (ok.length) {
-    E.vivo = new Map(ok.flatMap(x => x.value.map(q => [q.symbol, q])));
+  const okA = a.filter(x => x.status === "fulfilled"), okB = b.filter(x => x.status === "fulfilled");
+  if (okA.length || okB.length) {
+    const vivo = new Map(okB.flatMap(x => x.value.map(q => [q.symbol, q])));
+    for (const q of okA.flatMap(x => x.value)) if (conPuntas(q) || !conPuntas(vivo.get(q.symbol))) vivo.set(q.symbol, { ...q, fuente: "data912" });
+    E.vivo = vivo;
     memo.clear();
-    E.horaVivo = new Date(); E.errorVivo = ok.length < fuentes.length ? "parcial" : null;
+    E.horaVivo = new Date();
+    const faltan = [okA.length < d912.length && "data912", okB.length < byma.length && "BYMA"].filter(Boolean);
+    E.errorVivo = faltan.length ? `parcial: sin ${faltan.join(" ni ")}` : null;
     E.liq = liquidacionHoy();
-  } else E.errorVivo = "sin conexión con data912";
+  } else E.errorVivo = "sin conexión con data912 ni BYMA";
   estado(); pintar();
 }
 
@@ -381,7 +397,7 @@ function ficha(b) {
       ${b.calificacion ? dato("Calificación", esc(b.calificacion)) : ""}${b.fuente_flujos && b.fuente_flujos !== "BYMA" ? dato("Flujos", esc(b.fuente_flujos)) : ""}
     </div>
     <div class="tabla-caja"><table><thead><tr><th>Línea</th><th class="n">Compra</th><th class="n">TIR</th><th class="n">Venta</th><th class="n">TIR</th><th class="n">Puntas</th><th class="n">DM</th><th class="n">Vol.</th></tr></thead><tbody>
-      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}</td><td class="n">${conCant(v?.ask, v?.qAsk, usd ? 2 : 3)}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${conCant(v?.bid, v?.qBid, usd ? 2 : 3)}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
+      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}${v?.fuente === "BYMA" ? ` <span class="etq" title="Sin puntas en data912: puntas de BYMA, con 20 minutos de demora">BYMA</span>` : ""}</td><td class="n">${conCant(v?.ask, v?.qAsk, usd ? 2 : 3)}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${conCant(v?.bid, v?.qBid, usd ? 2 : 3)}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
     </tbody></table></div>
     ${b.cobra === "CCL" ? `<p class="nota">Cobra cable: la TIR de la línea D supone canje cero al cobro (piso del comprador en MEP).</p>` : ""}
     ${vivos.some(([, v]) => v?.ancho > 0.01) ? `<p class="nota aviso">Puntas de más de 1%: la TIR de la punta no es ejecutable, hace falta orden límite.</p>` : ""}
