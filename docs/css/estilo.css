@@ -48,7 +48,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 main { max-width: 1280px; margin: 0 auto; padding: 12px 16px 40px; }
 .panel { display: flex; flex-direction: column; gap: 10px; }
-.panel[hidden] { display: none; }
+.panel[hidden], .campo[hidden] { display: none; }
 
 .filtros { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .filtros input[type="search"], .filtros select, .campo input, .campo select {

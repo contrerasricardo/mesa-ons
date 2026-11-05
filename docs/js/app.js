@@ -387,6 +387,7 @@ function ficha(b) {
       <button class="btn" data-lista type="button">${enLista(b) ? "Quitar de mi lista" : "Agregar a mi lista"}</button>
       ${usd && b.calculable ? `<button class="btn" data-vendo type="button">Vendo en el pase</button><button class="btn" data-compro type="button">Compro en el pase</button>` : ""}
     </div>
+    ${usd ? ticketHTML(b, lineas) : ""}
     <h4 style="margin:4px 0 0">Flujos por 100 de VN original</h4>
     <div class="tabla-caja"><table><thead><tr><th>Fecha</th><th class="n">Renta</th><th class="n">Amortización</th><th class="n">Total</th></tr></thead><tbody>
       ${fl.length ? fl.map(([d, c, r, a]) => `<tr><td>${fecha(mas(base, d))}</td><td class="n">${num(r + a, 4)}</td><td class="n">${c ? num(c, 4) : "—"}</td><td class="n">${num(c + r + a, 4)}</td></tr>`).join("")
@@ -401,6 +402,7 @@ function ficha(b) {
   };
   dlg.querySelector("[data-vendo]")?.addEventListener("click", () => { E.pase.vendo = b.tk; E.pase.pv = ""; dlg.close(); ir("pase"); });
   dlg.querySelector("[data-compro]")?.addEventListener("click", () => { E.pase.compro = b.tk; E.pase.pc = ""; dlg.close(); ir("pase"); });
+  if (usd) atarTicket(dlg, b);
   if (!dlg.open) dlg.showModal();
 }
 const dato = (t, v) => `<div class="dato"><span>${t}</span><b>${v}</b></div>`;
@@ -416,6 +418,73 @@ function editarLista() {
     E.lista = new Set(s); guardado.escribir("lista", s); pintar();
   };
   dlg.showModal();
+}
+
+// ---------- ticket ----------
+// Orden en dólares: con el monto, el VN redondeado hacia abajo a la lámina mínima, la comisión y lo que sobra; con el VN a vender,
+// lo que entra neto. Lámina de chamomberg (soberanos: 1); la que se escribe a mano queda guardada por ticker.
+E.ticket = { lado: "compro", monto: "10000", vn: "", com: "0,5", ...guardado.leer("ticket", {}) };
+E.laminas = guardado.leer("laminas", {});
+const laminaDe = b => E.laminas[b.tk] ?? b.lamina ?? (b.segmento === "sob" ? 1 : null);
+function ticketHTML(b, lineas) {
+  const T = E.ticket, lam = laminaDe(b);
+  const fuente = E.laminas[b.tk] != null ? "a mano" : b.lamina != null ? "chamomberg" : b.segmento === "sob" ? "soberano" : "sin dato: escríbela";
+  return `<div class="tarjeta ticket"><h4>Ticket</h4>
+    <div class="form-calc">
+      <label class="campo">Línea<select name="t-linea">${lineas.map(l => `<option value="${l}">${esc(b.lineas[l])}</option>`).join("")}</select></label>
+      <label class="campo">Operación<select name="t-lado"><option value="compro">Compro</option><option value="vendo">Vendo</option></select></label>
+      <label class="campo" data-solo="compro">Monto US$<input name="t-monto" inputmode="decimal" value="${esc(T.monto)}"></label>
+      <label class="campo" data-solo="vendo">VN a vender<input name="t-vn" inputmode="decimal" value="${esc(T.vn)}"></label>
+      <label class="campo">Precio (vacío = punta)<input name="t-px" inputmode="decimal" placeholder=""></label>
+      <label class="campo">Comisión %<input name="t-com" inputmode="decimal" value="${esc(T.com)}"></label>
+      <label class="campo">Lámina mínima (${esc(fuente)})<input name="t-lam" inputmode="decimal" value="${lam ?? ""}"></label>
+    </div>
+    <div class="t-res"></div></div>`;
+}
+function atarTicket(dlg, b) {
+  const caja = dlg.querySelector(".ticket"), T = E.ticket;
+  const c = n => caja.querySelector(`[name="t-${n}"]`);
+  c("lado").value = T.lado;
+  const calcular = () => {
+    T.lado = c("lado").value; T.monto = c("monto").value; T.vn = c("vn").value; T.com = c("com").value;
+    guardado.escribir("ticket", T);
+    const lamTxt = c("lam").value.trim();
+    if (lamTxt !== String(laminaDe(b) ?? "")) { lamTxt ? (E.laminas[b.tk] = dec(lamTxt)) : delete E.laminas[b.tk]; guardado.escribir("laminas", E.laminas); }
+    caja.querySelectorAll("[data-solo]").forEach(l => l.hidden = l.dataset.solo !== T.lado);
+    const linea = c("linea").value, v = enVivo(b, linea), compro = T.lado === "compro";
+    const punta = compro ? v?.ask : v?.bid, cant = compro ? v?.qAsk : v?.qBid;
+    c("px").placeholder = punta ? num(punta) : "sin punta";
+    caja.querySelector(".t-res").innerHTML = resultadoTicket(b, { compro, px: dec(c("px").value) ?? punta, punta, cant,
+      com: (dec(T.com) ?? 0) / 100, lam: dec(lamTxt) || 1, sinLam: !lamTxt, monto: dec(String(T.monto).replace(/\./g, "")), vn: dec(String(T.vn).replace(/\./g, "")),
+      flujos: v?.flujos ?? [], moneda: linea === "C" ? "US$ cable" : "US$ MEP" });
+  };
+  caja.querySelectorAll("input, select").forEach(e => e.addEventListener("input", calcular));
+  calcular();
+}
+function resultadoTicket(b, o) {
+  if (!o.px) return `<p class="nota aviso">Sin precio: escríbelo o actualiza las puntas.</p>`;
+  const x = o.px / 100, avisos = [];
+  let filas, vn;
+  if (o.compro) {
+    if (!(o.monto > 0)) return `<p class="nota">Escribe el monto.</p>`;
+    vn = Math.floor(o.monto / (x * (1 + o.com)) / o.lam + 1e-9) * o.lam;
+    if (!vn) return `<p class="nota aviso">No alcanza para una lámina: el mínimo es ${num(o.lam, 0)} VN, unos ${o.moneda} ${num(o.lam * x * (1 + o.com))}.</p>`;
+    const bruto = vn * x, com = bruto * o.com, y = o.flujos.length ? tir(o.flujos, o.px * (1 + o.com)) : null;
+    filas = [["VN a comprar", num(vn, 0)], ["Bruto", num(bruto)], ["Comisión", num(com)], ["Total a pagar", `<b>${num(bruto + com)}</b>`],
+      ["Sobra", num(o.monto - bruto - com)], ["TIR neta", pct(y)]];
+  } else {
+    if (!(o.vn > 0)) return `<p class="nota">Escribe el VN a vender.</p>`;
+    vn = o.vn;
+    if (Math.abs(vn / o.lam - Math.round(vn / o.lam)) > 1e-9) avisos.push(`${num(vn, 0)} no es múltiplo de la lámina de ${num(o.lam, 0)}.`);
+    const bruto = vn * x, com = bruto * o.com;
+    filas = [["VN a vender", num(vn, 0)], ["Bruto", num(bruto)], ["Comisión", num(com)], ["Neto a cobrar", `<b>${num(bruto - com)}</b>`]];
+  }
+  if (o.cant > 0 && vn > o.cant && o.px === o.punta) avisos.push(`La punta ${o.compro ? "vendedora" : "compradora"} tiene ${num(o.cant, 0)} VN: el resto queda en el libro a otro precio.`);
+  if (o.sinLam) avisos.push("Sin lámina mínima en la base: calculado de a 1 VN; confírmala antes de cargar la orden.");
+  return `<div class="datos">${filas.map(([t, v]) => dato(t, v)).join("")}</div>
+    <p class="nota">En ${o.moneda}, a ${num(o.px)} por 100 de VN original.</p>
+    ${avisos.map(a => `<p class="nota aviso">${esc(a)}</p>`).join("")}
+    <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;
 }
 
 // ---------- primaria ----------

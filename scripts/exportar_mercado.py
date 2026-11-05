@@ -127,8 +127,13 @@ def main():
     en_byma = {o["tk"] for o in ons}
     faltan = [tk for tk in chamo if tk not in en_byma]
     sin_dato = []
-    if faltan:
+    # chamomberg trae también la lámina mínima (`min`); se pide siempre, y si no responde las ONs quedan sin lámina
+    try:
         extra = flujos_chamomberg()
+    except Exception as e:
+        print(f"⚠ chamomberg no respondió ({type(e).__name__}: {e}): sin lámina mínima ni flujos de chamomberg.")
+        extra = {}
+    if faltan:
         for tk in faltan:
             o = extra.get(tk[:-1])
             if not o:
@@ -169,6 +174,8 @@ def main():
                 if len(cand) == 1:
                     o["emisor"] = next(iter(cand))
                     break
+    for o in ons:
+        o["lamina"] = (extra.get(o["tk"][:-1]) or {}).get("min")
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
     pagos = []
