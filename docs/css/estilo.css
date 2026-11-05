@@ -129,7 +129,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .tipo { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: var(--c);
   background: color-mix(in srgb, var(--c) 14%, transparent); white-space: nowrap; }
 .ranking { display: flex; flex-direction: column; gap: 12px; }
-.calc .form-calc { gap: 12px 14px; }
+.calc .form-calc { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px 32px; align-items: start; }
 .calc { gap: 12px; }
 .rk { display: grid; grid-template-columns: 34px minmax(190px, 1.6fr) repeat(3, minmax(92px, 1fr)) minmax(140px, 1.3fr) minmax(110px, 1fr);
   gap: 4px 12px; align-items: center; padding: 9px 12px; border: 1px solid var(--linea); border-left: 4px solid var(--c);
