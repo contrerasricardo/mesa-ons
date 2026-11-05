@@ -1,9 +1,9 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105b";
-import { descifrar } from "./descifrar.js?v=20261105b";
-import { crearMotor } from "./pesos.js?v=20261105b";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105c";
+import { descifrar } from "./descifrar.js?v=20261105c";
+import { crearMotor } from "./pesos.js?v=20261105c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -844,12 +844,13 @@ function resultadoMonedas(qC, qV) {
   const cot = ars ? dato(`$ por US$ ${M.a === "ARS" ? M.de : M.a}`, num(tc(tasa), 2)) + dato("Sin comisión", num(tc(tasaSin), 2))
     : dato("Canje", pct(cj(tasa))) + dato("Canje sin comisión", pct(cj(tasaSin)));
   return `
+      <div class="recibo">Recibes <b class="pos">${num(recibo, 2)} ${a.sim}</b> <span class="suave">netos, por ${num(monto, 2)} ${de.sim} · vendiendo ${num(vn, 0)} VN de ${esc(tkV)}</span></div>
       <div class="datos mon">
         ${dato(`1 ${de.sim} =`, en(tasa, a, M.a === "ARS" ? 2 : M.de === "ARS" ? 6 : 4))}${dato(`1 ${a.sim} =`, en(1 / tasa, de, M.de === "ARS" ? 2 : M.a === "ARS" ? 6 : 4))}${cot}
       </div>
       <div class="datos mon">
         ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} <small class="cant">VN a ${num(pc / 100, M.de === "ARS" ? 2 : 4)}</small>`)}${dato("Pago", en(costo, de))}${dato("Sobra", en(sobra, de))}
-        ${dato(`Recibo (${esc(tkV)})`, `<span class="pos">${en(recibo, a)}</span>`)}${dato("Comisiones", en(bruto * (cc + cv), a))}
+        ${dato("Comisiones", en(bruto * (cc + cv), a))}
       </div>
       <p class="nota">${esc(tkC)} a ${num(pc, M.de === "ARS" ? 2 : 3)} + ${pct(cc)} · ${esc(tkV)} a ${num(pv, M.a === "ARS" ? 2 : 3)} − ${pct(cv)} · precios por 100 VN, de a 1 VN · pago y recibo con comisión${ars ? "" : "; canje = MEP por cada cable − 1"} · ${esc(fuente)}${dec(M.pc) != null || dec(M.pv) != null ? " (con precio a mano)" : ""}.</p>
       <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;

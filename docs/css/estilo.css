@@ -161,3 +161,6 @@ h3.sub { margin: 14px 0 0; font-size: 15px; }
 .datos.mon { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .datos.mon b { white-space: nowrap; font-size: 14px; }
 .datos.mon .dato span { font-size: 10.5px; }
+.recibo { font-size: 15px; padding: 10px 12px; border-radius: 8px; background: var(--acento-suave); }
+.recibo b { font-size: 24px; font-variant-numeric: tabular-nums; margin: 0 4px; }
+.recibo .suave { font-size: 12px; }
