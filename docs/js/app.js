@@ -1,4 +1,4 @@
-// Mesa de ONs: cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
+// STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
 import { tir, duration, liquidacionHoy, alinear, dias, pase } from "./calc.js";
