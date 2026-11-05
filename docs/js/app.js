@@ -216,9 +216,149 @@ function pPesos() {
     { k: "dm", t: "DM", n: 1, cls: "ocultar-movil", f: b => num(b.dm), v: b => b.dm },
   ];
   $("#p-pesos").replaceChildren(
+    calculadoraPesos(),
     barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker"><select name="seg"><option value="">Todos</option>${Object.entries(SEG).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>`),
     nota("TIR en vivo solo para tasa fija (LECAP, BONCAP, bonos a tasa fija). CER: TIR real de BYMA al cierre."),
     tabla(id, filas, cols, { alClick: ficha, grupo: b => SEG[b.segmento] }));
+}
+
+// Calculadora por fecha objetivo: el mismo motor que Finanzas computacionales/calc_pesos.ipynb (Bloque 8), con lo que se puede
+// hacer en el navegador. Todos al MISMO horizonte: lo que vence antes se reinvierte en caución hasta la fecha; lo que vence después
+// se vende ese día a TIR constante (y paga comisión otra vez). Comisión de compra del mismo bolsillo: (1+neto) = (1+bruto)/(1+c).
+// LECAP/BONCAP/tasa fija: exacto con los flujos de BYMA. CER: el flujo de BYMA es el valor técnico al CER del cierre; se pasa a pesos
+// con la inflación mensual supuesta. TAMAR y duales necesitan el sendero de TAMAR y las patas de la ficha: quedan para el notebook.
+const CALC_DEF = { objetivo: "", ventana: "30", monto: "1000000", caucion: "", infl: "1.6", comBaja: "0.1", comStd: "0.5", comCau: "2" };
+E.calc = { ...CALC_DEF, ...guardado.leer("calc", {}) };
+const TIPO = { lec: "LECAP", fija: "Tasa fija", cer: "CER" };
+
+function precioPesos(b) {
+  // Vivo a la punta vendedora; un error de escala contra el cierre (×100, ×0,01) se corrige y un desvío de más de 8% se marca.
+  let p = enVivo(b, "ARS")?.ask, fuente = "vivo", alerta = false;
+  if (p && b.px) {
+    const r = p / b.px;
+    if (r > 50 && r < 200) p /= 100; else if (r > 0.005 && r < 0.02) p *= 100;
+    alerta = Math.abs(p / b.px - 1) > 0.08;
+  }
+  if (!p) { p = b.px; fuente = "cierre"; }
+  return { p, fuente, alerta };
+}
+
+function motorPesos(C) {
+  const D = dias(E.liq, C.objetivo), ven = +C.ventana || 0, monto = dec(C.monto) || 0;
+  const tna = dec(C.caucion) != null ? dec(C.caucion) / 100 : null, tnaNeta = tna == null ? null : Math.max(tna - (dec(C.comCau) ?? 0) / 100, 0);
+  const infl = (dec(C.infl) ?? 0) / 100, cBaja = (dec(C.comBaja) ?? 0) / 100, cStd = (dec(C.comStd) ?? 0) / 100;
+  const filas = [], fuera = [];
+  for (const b of E.pesos) {
+    const vto = dias(E.liq, b.vencimiento);
+    if (Math.abs(dias(C.objetivo, b.vencimiento)) > ven || vto <= 0) continue;
+    if (!TIPO[b.segmento] || !b.flujos.length) { fuera.push(b); continue; }
+    const { p, fuente, alerta } = precioPesos(b);
+    if (!p) continue;
+    const k = dias(b.liq, E.liq);
+    let fl = alinear(b.flujos, b.liq, E.liq);
+    if (b.segmento === "cer") fl = fl.map(([d, c, r, a]) => { const f = (1 + infl) ** ((d + k) / (365 / 12)); return [d, c * f, r * f, a * f]; });
+    if (!fl.length) continue;
+    const y = tir(fl, p);
+    const cv = (b.segmento === "lec" || (b.segmento === "cer" && b.tk.startsWith("X"))) ? cBaja : cStd;
+    // Valor al horizonte por 100 de VN: cobros hasta la fecha reinvertidos en caución, el resto vendido a TIR constante.
+    const alHorizonte = (t, vender) => {
+      const antes = fl.filter(f => f[0] <= D), resto = fl.filter(f => f[0] > D).map(([d, ...x]) => [d - D, ...x]);
+      const cobrado = antes.reduce((s, [d, c, r, a]) => s + (c + r + a) * (1 + (t ?? 0) / 365) ** (D - d), 0);
+      const venta = resto.length ? resto.reduce((s, [d, c, r, a]) => s + (c + r + a) / (1 + y) ** (d / 365), 0) * (vender ? 1 - cv : 1) : 0;
+      return cobrado + venta;
+    };
+    const bruto = alHorizonte(tna, false) / p - 1;
+    const neto = alHorizonte(tnaNeta, true) / p / (1 + cv) - 1;
+    const vtoUlt = Math.max(...fl.map(f => f[0])), hueco = D - vtoUlt;
+    const trat = hueco > 0 ? `vence el ${fecha(b.vencimiento).slice(0, 5)} y ${tna == null ? `queda ${hueco} d sin reinvertir` : `reinvierte ${hueco} d en caución`}`
+      : hueco < 0 ? `vence el ${fecha(b.vencimiento).slice(0, 5)}; se vende el ${fecha(C.objetivo).slice(0, 5)} a TIR constante` : "vence en la fecha";
+    filas.push({ b, tipo: TIPO[b.segmento], p, fuente, alerta, y, cv, bruto, neto, hueco, trat, fl,
+      vn: monto / (1 + cv) / p * 100, comision: monto - monto / (1 + cv) });
+  }
+  if (tna != null) {
+    const bruto = (1 + tna / 365) ** D - 1, neto = (1 + tnaNeta / 365) ** D - 1;
+    filas.push({ b: { tk: "Caución", vencimiento: C.objetivo }, tipo: "Caución", fuente: "supuesto", bruto, neto, cv: (1 + bruto) / (1 + neto) - 1,
+      hueco: 0, trat: "renueva a diario hasta la fecha", comision: monto - monto * (1 + neto) / (1 + bruto) });
+  }
+  filas.forEach(r => { r.tea = (1 + r.neto) ** (365 / D) - 1; r.final = monto * (1 + r.neto); r.ganancia = monto * r.neto; });
+  filas.sort((a, b) => b.neto - a.neto);
+  return { D, monto, tna, tnaNeta, infl, filas, fuera };
+}
+
+// Riesgo de reinversión: TNA de caución a la que el que vence antes empata con el mejor que no depende de ella.
+function empateCaucion(r, ref, C) {
+  if (!(r.hueco > 0) || !ref) return null;
+  const g = t => motorPesos({ ...C, caucion: String(100 * t) }).filas.find(x => x.b.tk === r.b.tk).neto - ref.neto;
+  let lo = 0, hi = 3;
+  if (g(lo) * g(hi) > 0) return null;
+  for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; g(m) > 0 ? (hi = m) : (lo = m); }
+  return (lo + hi) / 2;
+}
+
+function calculadoraPesos() {
+  const C = E.calc;
+  if (!C.objetivo) C.objetivo = mas(E.liq, 60);
+  const el = document.createElement("div");
+  el.className = "tarjeta";
+  el.innerHTML = `<h4>¿Para cuándo necesitas la plata?</h4>
+    <div class="form-calc">
+      <label class="campo">Fecha objetivo<input type="date" name="objetivo" value="${esc(C.objetivo)}"></label>
+      <label class="campo">Ventana ± días<input name="ventana" inputmode="numeric" value="${esc(C.ventana)}"></label>
+      <label class="campo">Plata a invertir (con comisión)<input name="monto" inputmode="decimal" value="${esc(C.monto)}"></label>
+      <label class="campo">TNA caución % (reinversión)<input name="caucion" inputmode="decimal" value="${esc(C.caucion)}" placeholder="vacío = no reinvierte"></label>
+      <label class="campo">Inflación mensual % (CER)<input name="infl" inputmode="decimal" value="${esc(C.infl)}"></label>
+      <label class="campo">Com. LECAP y CER «X» %<input name="comBaja" inputmode="decimal" value="${esc(C.comBaja)}"></label>
+      <label class="campo">Com. resto %<input name="comStd" inputmode="decimal" value="${esc(C.comStd)}"></label>
+      <label class="campo">Com. caución % anual<input name="comCau" inputmode="decimal" value="${esc(C.comCau)}"></label>
+    </div>
+    <div id="res-calc"></div>`;
+  el.querySelectorAll("[name]").forEach(c => c.addEventListener("change", () => {
+    C[c.name] = c.value.trim(); guardado.escribir("calc", C); el.querySelector("#res-calc").innerHTML = resultadoCalc(C);
+  }));
+  el.querySelector("#res-calc").innerHTML = resultadoCalc(C);
+  return el;
+}
+
+const plata = v => v == null || !isFinite(v) ? "—" : "$ " + nf(0).format(v);
+function resultadoCalc(C) {
+  if (!C.objetivo || dias(E.liq, C.objetivo) <= 0) return `<p class="nota aviso">La fecha objetivo tiene que ser posterior a la liquidación (${fecha(E.liq)}).</p>`;
+  const R = motorPesos(C);
+  if (!R.filas.length) {
+    const prox = E.pesos.filter(b => TIPO[b.segmento] && dias(E.liq, b.vencimiento) > 0)
+      .sort((a, b) => Math.abs(dias(C.objetivo, a.vencimiento)) - Math.abs(dias(C.objetivo, b.vencimiento)))[0];
+    return `<p class="nota aviso">Nada vence dentro de ±${esc(C.ventana)} días del ${fecha(C.objetivo)}${prox ? `; el más cercano es ${esc(prox.tk)} (${fecha(prox.vencimiento)})` : ""}. Agranda la ventana o carga la caución.</p>`;
+  }
+  const top = R.filas[0];
+  const sinCau = R.filas.find(r => r.hueco <= 0 && r.tipo !== "Caución");
+  const emp = top.hueco > 0 && R.tna != null ? empateCaucion(top, sinCau, C) : null;
+  const filas = R.filas.map((r, i) => `<tr${i === 0 ? ' class="mia"' : ""}>
+      <td><span class="tk">${esc(r.b.tk)}</span> <span class="etq">${esc(r.tipo)}</span></td>
+      <td>${r.tipo === "Caución" ? "—" : fecha(r.b.vencimiento)}</td>
+      <td class="ocultar-movil suave">${esc(r.trat)}</td>
+      <td class="n">${r.p ? num(r.p, 3) : "—"}${r.fuente === "cierre" ? ' <span class="etq">cierre</span>' : ""}${r.alerta ? ' <span class="aviso" title="Más de 8% contra el cierre">⚠</span>' : ""}</td>
+      <td class="n ocultar-movil">${pct(r.cv)}</td>
+      <td class="n ocultar-movil">${pct(r.bruto)}</td>
+      <td class="n"><b>${pct(r.neto)}</b></td>
+      <td class="n">${pct(r.tea)}</td>
+      <td class="n">${plata(r.final)}</td>
+      <td class="n ocultar-movil">${r.vn ? nf(0).format(Math.floor(r.vn)) : "—"}</td>
+    </tr>`).join("");
+  const avisos = [];
+  if (R.tna == null && R.filas.some(r => r.hueco > 0)) avisos.push("Sin TNA de caución: lo que vence antes de la fecha queda quieto hasta ese día. Cárgala para comparar en serio.");
+  if (R.filas.some(r => r.tipo === "CER")) avisos.push(`CER en pesos con ${pct(R.infl, 1)} mensual supuesto: el resultado depende de ese número (el REM de septiembre da ~1,6%).`);
+  if (R.filas.some(r => r.hueco < 0)) avisos.push("Lo que vence después se vende en la fecha a TIR constante y paga comisión otra vez: es un supuesto, la tasa de ese día no se sabe.");
+  if (R.filas.some(r => r.alerta)) avisos.push("⚠ Precio vivo a más de 8% del cierre: revisa la punta antes de usarlo.");
+  if (R.fuera.length) avisos.push(`Fuera del cálculo (TAMAR y duales: hace falta el sendero de TAMAR y la ficha; usa calc_pesos.ipynb): ${R.fuera.map(b => esc(b.tk)).join(", ")}.`);
+  return `
+    <div class="veredicto">Con ${plata(R.monto)} hoy, el mejor a ${R.D} días es <b>${esc(top.b.tk)}</b>: cobras <b>${plata(top.final)}</b> el ${fecha(C.objetivo)}
+      (${pct(top.neto)} neto de comisiones, TEA ${pct(top.tea)}).${top.vn ? ` Son ${nf(0).format(Math.floor(top.vn))} VN y ${plata(top.comision)} de comisión.` : ""}
+      ${emp != null ? `<br>Depende de la caución: empata con ${esc(sinCau.b.tk)} si la TNA futura es <b>${pct(emp)}</b>.` : ""}</div>
+    <div class="tabla-caja"><table>
+      <thead><tr><th>Título</th><th>Vto.</th><th class="ocultar-movil">Cómo llega a la fecha</th><th class="n">Precio</th><th class="n ocultar-movil">Comisión</th>
+        <th class="n ocultar-movil">Rend. bruto</th><th class="n">Rend. neto</th><th class="n">TEA neta</th><th class="n">Cobras</th><th class="n ocultar-movil">VN</th></tr></thead>
+      <tbody>${filas}</tbody></table></div>
+    ${avisos.map(a => `<p class="nota">${a}</p>`).join("")}
+    <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;
 }
 
 function pPagos() {
