@@ -87,6 +87,7 @@ th:first-child { z-index: 2; }
 .emisor { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .tk { font-weight: 600; }
 .pos { color: var(--pos); } .neg { color: var(--neg); } .aviso { color: var(--aviso); } .suave { color: var(--suave); }
+small.cant { font-size: 10.5px; color: var(--suave); margin-left: 2px; }
 .etq { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--linea2); color: var(--suave); }
 .grupo td { background: var(--fondo); font-weight: 600; color: var(--suave); font-size: 12px; cursor: default; }
 .grupo:hover td { background: var(--fondo) !important; }

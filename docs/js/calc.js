@@ -35,11 +35,16 @@ export function duration(flujos, y) {
   return { macaulay: mac, modificada: mac / (1 + y) };
 }
 
-// data912 cotiza a 24 hs: liquida el próximo día hábil (sin feriados), como scripts/ons_puntas.py
+// data912 cotiza a 24 hs: liquida el próximo día hábil, con los feriados de data/reference/supuestos-pesos.json (los mismos del
+// motor de pesos). Un día no hábil opera el hábil siguiente y liquida el posterior.
+let FERIADOS = new Set();
+export const fijarFeriados = lista => { FERIADOS = new Set(lista); };
+export const esHabil = iso => { const w = new Date(iso + "T12:00:00Z").getUTCDay(); return w !== 0 && w !== 6 && !FERIADOS.has(iso); };
+export const habilDesde = iso => { let d = iso; while (!esHabil(d)) d = new Date(Date.parse(d) + 864e5).toISOString().slice(0, 10); return d; };
+const sig = iso => habilDesde(new Date(Date.parse(iso) + 864e5).toISOString().slice(0, 10));
 export function liquidacionHoy(hoy = new Date()) {
-  const d = new Date(Date.UTC(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + 1));
-  while ([0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
+  const h = new Date(hoy.getTime() - hoy.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+  return sig(esHabil(h) ? h : habilDesde(h));
 }
 
 export const dias = (desde, hasta) => Math.round((Date.parse(hasta) - Date.parse(desde)) / 864e5);

@@ -1,6 +1,6 @@
 // Motor de la calculadora de pesos: traducción de recomendar() de Finanzas computacionales/calc_pesos.ipynb (Bloque 8), función por
 // función. Insumos: pesos.json (curva, ficha y flujos del cierre de BYMA), motor_pesos.json (CER y TAMAR del BCRA, REM, comisiones,
-// feriados, márgenes) y el precio en vivo de data912 (último operado, como el notebook), anclado contra el cierre de BYMA.
+// feriados, márgenes) y el precio en vivo de data912 (punta vendedora; sin punta, último operado: el notebook usa el último), anclado contra el cierre de BYMA.
 //
 // Ranking al MISMO horizonte (la fecha objetivo): lo que vence antes se REINVIERTE en caución hasta ahí; lo que vence después se VENDE
 // ese día a TIR constante (y paga comisión otra vez). Compra con comisión del mismo bolsillo: (1 + neto) = (1 + bruto)/(1 + c).
@@ -52,11 +52,11 @@ export function crearMotor(pesos, M, meta) {
       margen: f.margen_tamar || M.margen_inferido[b.tk] || null, temFija: f.tem_fija_dual ?? null, dualCer: f.dual_cer ?? b.tk.startsWith("TXM") };
   }).filter(Boolean);
 
-  // Precio: el último operado de data912 (como el notebook); sin precio en vivo, el último cierre de BYMA. Contra el cierre en pesos
-  // (`pxa`): un cociente ≈ ×100, ×1000, ×0,01 es un error de ESCALA y se corrige; más de 8% de desvío se marca.
+  // Precio: comprar es a la punta vendedora de data912 (el notebook usa el último operado); sin punta, el último operado; sin
+  // precio en vivo, el último cierre de BYMA. Contra el cierre en pesos (`pxa`): un cociente ≈ ×100, ×1000, ×0,01 es un error de ESCALA y se corrige; más de 8% de desvío se marca.
   function precio(u, vivo) {
     const q = vivo?.get(u.tk);
-    let p = q?.c > 0 ? q.c : null, fuente = "data912", alerta = "";
+    let p = q?.px_ask > 0 ? q.px_ask : q?.c > 0 ? q.c : null, fuente = q?.px_ask > 0 ? "punta vendedora" : "último operado", alerta = "";
     if (!p) return u.pxa > 0 ? { p: u.pxa, fuente: "cierre BYMA", alerta: "solo cierre" } : { p: null, fuente: "—", alerta: "" };
     p = base100(p, u.tk);
     if (u.pxa > 0) {

@@ -1,7 +1,7 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, duration, liquidacionHoy, alinear, dias, pase } from "./calc.js";
+import { tir, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde } from "./calc.js";
 import { descifrar } from "./descifrar.js";
 import { crearMotor } from "./pesos.js";
 
@@ -11,6 +11,9 @@ const nf = (d) => new Intl.NumberFormat("es-AR", { minimumFractionDigits: d, max
 const num = (v, d = 2) => v == null || !isFinite(v) ? "—" : nf(d).format(v);
 const pct = (v, d = 2) => v == null || !isFinite(v) ? "—" : nf(d).format(100 * v) + "%";
 const pb = v => v == null || !isFinite(v) ? "—" : (v > 0 ? "+" : "") + nf(0).format(v);
+// nominales a la punta, compactos (350 k, 1,2 M)
+const cant = v => !(v > 0) ? "" : v >= 1e6 ? nf(1).format(v / 1e6) + " M" : v >= 1e3 ? nf(0).format(v / 1e3) + " k" : nf(0).format(v);
+const conCant = (px, q, d = 2) => px == null ? "—" : `${num(px, d)}${q > 0 ? ` <small class="cant">${cant(q)}</small>` : ""}`;
 const fecha = s => s ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : "—";
 const mas = (iso, d) => new Date(Date.parse(iso) + d * 864e5).toISOString().slice(0, 10);
 const hoyISO = () => new Date().toISOString().slice(0, 10);
@@ -52,7 +55,7 @@ function calcularVivo(b, linea) {
   const fl = b.calculable ? alinear(b.flujos, b.liq, E.liq) : [];
   const ask = q.px_ask > 0 ? q.px_ask : null, bid = q.px_bid > 0 ? q.px_bid : null;
   const tAsk = fl.length && ask ? tir(fl, ask) : null, tBid = fl.length && bid ? tir(fl, bid) : null;
-  return { ask, bid, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null,
+  return { ask, bid, qAsk: ask ? q.q_ask : null, qBid: bid ? q.q_bid : null, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null,
     dm: tAsk != null ? duration(fl, tAsk).modificada : null, flujos: fl };
 }
 
@@ -70,8 +73,10 @@ async function cargar() {
   E.ons = ons.map(x => normalizar(x, "on"));
   E.soberanos = sob.map(x => normalizar(x, "sob"));
   E.pesos = pesos.map(x => normalizar(x, "ars"));
-  E.pagos = pagos;
-  try { E.motor_meta = await leer("motor_pesos"); E.motor = crearMotor(pesos, E.motor_meta, meta); } catch (e) { console.error(e); E.motor = null; }
+  try { E.motor_meta = await leer("motor_pesos"); fijarFeriados(E.motor_meta.feriados); E.motor = crearMotor(pesos, E.motor_meta, meta); } catch (e) { console.error(e); E.motor = null; }
+  E.liq = liquidacionHoy();
+  // el pago que cae en sábado, domingo o feriado se cobra el hábil siguiente
+  E.pagos = pagos.map(p => ({ ...p, cobro: habilDesde(p.fecha) }));
 }
 
 async function pedirVivo() {
@@ -153,79 +158,48 @@ const selCobra = `<select name="cobra"><option value="">Cobra: todas</option><op
 const chipLista = `<label class="chip"><input type="checkbox" name="lista"> Mi lista</label><button class="btn chico" type="button" data-lista>Editar lista</button>`;
 
 // columnas comunes de bonos en dólares
-function colsDolares(conEmisor) {
+function colsDolares() {
+  const v = b => enVivo(b, "D");
   return [
     { k: "tk", t: "Ticker", f: b => `<span class="tk">${esc(b.tk)}</span>`, v: b => b.tk },
-    ...(conEmisor ? [{ k: "emisor", t: "Emisor", cls: "emisor", f: b => esc(b.emisor), v: b => b.emisor }] : []),
+    { k: "emisor", t: "Emisor", cls: "emisor", f: b => esc(b.segmento === "sob" ? b.clase : b.emisor), v: b => b.emisor },
     { k: "ley", t: "Ley", f: b => b.ley, v: b => b.ley },
     { k: "cobra", t: "Cobra", f: b => b.cobra, v: b => b.cobra },
     { k: "vencimiento", t: "Vto.", f: b => fecha(b.vencimiento), v: b => b.vencimiento },
-    { k: "cupon", t: "Cupón", n: 1, cls: "ocultar-movil", f: b => pct(b.cupon), v: b => b.cupon },
-    { k: "px", t: "Cierre", n: 1, cls: "ocultar-movil", f: b => num(b.px), v: b => b.px },
-    { k: "ytm", t: "TIR cierre", n: 1, f: b => pct(b.ytm), v: b => b.ytm, titulo: "TIR de BYMA al cierre" },
-    { k: "dm", t: "DM", n: 1, cls: "ocultar-movil", f: b => num(b.dm), v: b => b.dm, titulo: "Duration modificada de BYMA" },
-    { k: "ask", t: "Compra D", n: 1, f: b => num(enVivo(b, "D")?.ask), v: b => enVivo(b, "D")?.ask, titulo: "Punta vendedora de la línea D (MEP)" },
-    { k: "tAsk", t: "TIR compra", n: 1, f: b => pct(enVivo(b, "D")?.tAsk), v: b => enVivo(b, "D")?.tAsk },
-    { k: "tBid", t: "TIR venta", n: 1, cls: "ocultar-movil", f: b => pct(enVivo(b, "D")?.tBid), v: b => enVivo(b, "D")?.tBid },
-    { k: "ancho", t: "Puntas", n: 1, f: b => { const a = enVivo(b, "D")?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => enVivo(b, "D")?.ancho, titulo: "Ancho de puntas D: más de 1% pide orden límite" },
-    { k: "volD", t: "Vol. D", n: 1, cls: "ocultar-movil", f: b => num(enVivo(b, "D")?.vol, 0), v: b => enVivo(b, "D")?.vol, titulo: "Nominales operados hoy en la línea D" },
+    { k: "ask", t: "Compra D", n: 1, f: b => conCant(v(b)?.ask, v(b)?.qAsk), v: b => v(b)?.ask, titulo: "Punta vendedora de la línea D (MEP) y nominales ofrecidos" },
+    { k: "tAsk", t: "TIR compra", n: 1, f: b => pct(v(b)?.tAsk), v: b => v(b)?.tAsk },
+    { k: "bid", t: "Venta D", n: 1, cls: "ocultar-movil", f: b => conCant(v(b)?.bid, v(b)?.qBid), v: b => v(b)?.bid, titulo: "Punta compradora de la línea D y nominales pedidos" },
+    { k: "tBid", t: "TIR venta", n: 1, cls: "ocultar-movil", f: b => pct(v(b)?.tBid), v: b => v(b)?.tBid },
+    { k: "ancho", t: "Puntas", n: 1, f: b => { const a = v(b)?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => v(b)?.ancho, titulo: "Ancho de puntas D: más de 1% pide orden límite" },
+    { k: "volD", t: "Vol. D", n: 1, cls: "ocultar-movil", f: b => num(v(b)?.vol, 0), v: b => v(b)?.vol, titulo: "Nominales operados hoy en la línea D" },
   ];
 }
 
 // ---------- pestañas ----------
-function pON() {
-  const id = "ons", f = filtro(id, { q: "", ley: "", cobra: "", lista: false, chamo: false, vivo: false });
-  const filas = E.ons.filter(b => buscar(f.q, b.tk, b.emisor, b.clase) && (!f.ley || b.ley === f.ley) && (!f.cobra || b.cobra === f.cobra)
+// ONs, soberanos y provinciales en una sola tabla: cupón, cierre, TIR y DM de BYMA quedan en la ficha
+const TIPOS = { on: "ONs", sob: "Soberanos", pro: "Provinciales" };
+const tipoDe = b => b.tipo === "on" ? "on" : b.segmento;
+function pDolares() {
+  const id = "dolares", f = filtro(id, { q: "", tipo: "", ley: "", cobra: "", lista: false, chamo: false, vivo: false });
+  const todos = [...E.ons, ...E.soberanos];
+  const filas = todos.filter(b => buscar(f.q, b.tk, b.emisor, b.clase) && (!f.tipo || tipoDe(b) === f.tipo)
+    && (!f.ley || b.ley === f.ley) && (!f.cobra || b.cobra === f.cobra)
     && (!f.lista || enLista(b)) && (!f.chamo || b.chamomberg) && (!f.vivo || enVivo(b, "D")?.ask));
-  const el = $("#p-ons"); el.replaceChildren(
-    barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker o emisor">${selLey}${selCobra}${chipLista}
+  $("#p-dolares").replaceChildren(
+    barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker o emisor">
+      <select name="tipo"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
+      ${selLey}${selCobra}${chipLista}
       <label class="chip"><input type="checkbox" name="chamo"> Universo chamomberg</label>
       <label class="chip"><input type="checkbox" name="vivo"> Con punta</label>`),
-    nota(`${filas.length} de ${E.ons.length} ONs hard dollar · flujos de BYMA (chamomberg o manuales donde BYMA no los trae) · la línea D de un bono que cobra CCL supone canje cero`),
-    tabla(id, filas, colsDolares(true), { alClick: ficha, clase: b => enLista(b) ? "mia" : "", grupo: b => b.emisor }));
+    nota(`${filas.length} de ${todos.length} bonos hard dollar · la cifra chica es el nominal a la punta · la línea D de un bono que cobra CCL supone canje cero`),
+    tabla(id, filas, colsDolares(), { alClick: ficha, clase: b => enLista(b) ? "mia" : "",
+      grupo: b => b.tipo === "on" ? b.emisor : TIPOS[b.segmento] }));
 }
 
-function pSoberanos() {
-  const id = "soberanos", f = filtro(id, { q: "", seg: "", lista: false });
-  const filas = E.soberanos.filter(b => buscar(f.q, b.tk, b.emisor, b.clase) && (!f.seg || b.segmento === f.seg) && (!f.lista || enLista(b)));
-  const cols = colsDolares(false);
-  cols.splice(1, 0, { k: "emisor", t: "Emisor", cls: "emisor", f: b => esc(b.segmento === "sob" ? b.clase : b.emisor), v: b => b.emisor });
-  $("#p-soberanos").replaceChildren(
-    barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker o emisor">
-      <select name="seg"><option value="">Todos</option><option value="sob">Soberanos</option><option value="pro">Provinciales</option></select>${chipLista}`),
-    nota(`${filas.length} bonos en dólares · ley NY cobra cable, ley argentina MEP`),
-    tabla(id, filas, cols, { alClick: ficha, clase: b => enLista(b) ? "mia" : "" }));
-}
-
-const SEG = { lec: "LECAP / BONCAP", fija: "Tasa fija", cer: "CER", tam: "TAMAR", dua: "Duales" };
-const tem = y => y == null ? null : (1 + y) ** (30 / 365) - 1;
-function pPesos() {
-  const id = "pesos", f = filtro(id, { q: "", seg: "" });
-  const filas = E.pesos.filter(b => buscar(f.q, b.tk, b.clase) && (!f.seg || b.segmento === f.seg))
-    .sort((a, b) => (Object.keys(SEG).indexOf(a.segmento) - Object.keys(SEG).indexOf(b.segmento)) || a.vencimiento.localeCompare(b.vencimiento));
-  const v = b => enVivo(b, "ARS");
-  const cols = [
-    { k: "tk", t: "Ticker", f: b => `<span class="tk">${esc(b.tk)}</span>`, v: b => b.tk },
-    { k: "vencimiento", t: "Vto.", f: b => fecha(b.vencimiento), v: b => b.vencimiento },
-    { k: "dias", t: "Días", n: 1, f: b => num(dias(E.liq, b.vencimiento), 0), v: b => b.vencimiento },
-    { k: "px", t: "Cierre", n: 1, cls: "ocultar-movil", f: b => num(b.px, 3), v: b => b.px },
-    { k: "ytm", t: "TIR cierre", n: 1, f: b => pct(b.ytm), v: b => b.ytm, titulo: "BYMA: en CER es TIR real; en TAMAR y duales, con el supuesto de tasa de BYMA" },
-    { k: "tem", t: "TEM cierre", n: 1, f: b => ["lec", "fija"].includes(b.segmento) ? pct(tem(b.ytm)) : "—", v: b => tem(b.ytm) },
-    { k: "ask", t: "Compra", n: 1, f: b => num(v(b)?.ask, 3), v: b => v(b)?.ask },
-    { k: "tAsk", t: "TIR compra", n: 1, f: b => pct(v(b)?.tAsk), v: b => v(b)?.tAsk, titulo: "Solo tasa fija: el resto necesita proyectar CER o TAMAR" },
-    { k: "temAsk", t: "TEM compra", n: 1, f: b => pct(tem(v(b)?.tAsk)), v: b => tem(v(b)?.tAsk) },
-    { k: "ancho", t: "Puntas", n: 1, cls: "ocultar-movil", f: b => { const a = v(b)?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => v(b)?.ancho },
-    { k: "dm", t: "DM", n: 1, cls: "ocultar-movil", f: b => num(b.dm), v: b => b.dm },
-  ];
-  $("#p-pesos").replaceChildren(
-    calculadoraPesos(),
-    barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker"><select name="seg"><option value="">Todos</option>${Object.entries(SEG).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>`),
-    nota("TIR en vivo solo para tasa fija (LECAP, BONCAP, bonos a tasa fija). CER: TIR real de BYMA al cierre."),
-    tabla(id, filas, cols, { alClick: ficha, grupo: b => SEG[b.segmento] }));
-}
+function pPesos() { $("#p-pesos").replaceChildren(calculadoraPesos()); }
 
 // Calculadora por fecha objetivo: el motor de Finanzas computacionales/calc_pesos.ipynb (Bloque 8) traducido en pesos.js, con la
-// curva y las fichas del cierre de BYMA, CER y TAMAR del BCRA, el REM y el último operado de data912.
+// curva y las fichas del cierre de BYMA, CER y TAMAR del BCRA, el REM y la punta vendedora de data912.
 const CALC_DEF = { objetivo: "", ventana: "30", monto: "1000000", caucion: "", modo: "rem", infl: "2", comBaja: "0,1", comStd: "0,5", comCau: "2" };
 E.calc = { ...CALC_DEF, ...guardado.leer("calc", {}) };
 const COLOR = { LECAP: "#3fa66a", BONCAP: "#4a7ebb", CER: "#d99a2b", TAMAR: "#d9534f", Dual: "#8e5fd6", "Caución": "#8a8a8a" };
@@ -323,7 +297,7 @@ function resultadoCalc(C) {
   const completo = R.ok.map((r, i) => `<tr${i === 0 ? ' class="mia"' : ""}>
       <td><span class="tk">${esc(r.tk)}</span> ${etqTipo(r.tipo)}</td>
       <td>${r.tipo === "Caución" ? "—" : fecha(r.venc)}</td>
-      <td class="n">${r.precio ? num(r.precio, 2) : "—"}${r.fuente === "cierre BYMA" ? ' <span class="etq">cierre</span>' : ""}${r.alerta ? ` <span class="aviso" title="${esc(r.alerta)}">⚠</span>` : ""}</td>
+      <td class="n">${r.precio ? num(r.precio, 2) : "—"}${r.fuente === "cierre BYMA" ? ' <span class="etq">cierre</span>' : r.fuente === "último operado" ? ' <span class="etq">último</span>' : ""}${r.alerta ? ` <span class="aviso" title="${esc(r.alerta)}">⚠</span>` : ""}</td>
       <td class="n">${pct(r.tea)}</td><td class="n ocultar-movil">${pct(r.bruto)}</td><td class="n ocultar-movil">${pct(r.comision)}</td>
       <td class="n"><b>${pct(r.neto)}</b></td><td class="n">${plata(r.gananciaNeta)}</td>
       <td class="ocultar-movil suave nota-celda">${esc(r.trat)}<br>${esc(r.nota)}</td></tr>`).join("");
@@ -343,13 +317,14 @@ function resultadoCalc(C) {
   </details>`;
 
   const avisos = [];
-  if (R.ok.some(r => r.fuente === "cierre BYMA")) avisos.push("Los marcados «cierre» no tienen último operado en data912: usan el cierre de BYMA.");
+  if (R.ok.some(r => r.fuente === "último operado")) avisos.push("Los marcados «último» no tienen punta vendedora: usan el último operado de data912.");
+  if (R.ok.some(r => r.fuente === "cierre BYMA")) avisos.push("Los marcados «cierre» no tienen precio en data912: usan el cierre de BYMA.");
   if (R.ok.some(r => r.alerta)) avisos.push("⚠ Precio con ajuste de unidad o a más de 8% del cierre: revisa la punta antes de usarlo.");
   if (R.ok.some(r => r.reinv < 0)) avisos.push("Lo que vence después se vende en la fecha a TIR constante y paga comisión otra vez: es un supuesto.");
   if (R.ok.some(r => r.tipo === "CER")) avisos.push(`CER proyectado con ${R.modo === "rem" ? esc(E.motor_meta.rem_fecha) : `${pct(R.inflMensual, 1)} mensual fijo`}; TAMAR con el sendero del REM.`);
   return `<div class="veredicto">${veredicto}</div>
     <div class="ranking">${top.map(filaTop).join("")}</div>
-    <p class="nota">Liquida ${fecha(R.liq)} · ${R.D} días al ${fecha(R.objetivo)} · caución ${pct(R.tnaCau)} TNA (neta ${pct(R.tnaCauN)}) · precios: último operado de data912</p>
+    <p class="nota">Liquida ${fecha(R.liq)} · ${R.D} días al ${fecha(R.objetivo)} · caución ${pct(R.tnaCau)} TNA (neta ${pct(R.tnaCauN)}) · precios: punta vendedora de data912 (sin punta, último operado)</p>
     <details><summary>Ranking completo (${R.ok.length})</summary><div class="tabla-caja"><table>
       <thead><tr><th>Título</th><th>Vto.</th><th class="n">Precio</th><th class="n">TEA a vto.</th><th class="n ocultar-movil">Bruto</th><th class="n ocultar-movil">Comisión</th><th class="n">Neto</th><th class="n">Ganancia</th><th class="ocultar-movil">Cómo llega · cálculo</th></tr></thead>
       <tbody>${completo}</tbody></table></div></details>
@@ -363,11 +338,11 @@ function pPagos() {
   const id = "pagos", f = filtro(id, { q: "", h: "90", lista: false, ley: "", cobra: "" });
   const desde = hoyISO(), hasta = f.h ? mas(desde, +f.h) : "9999";
   const porTk = new Map(E.ons.map(b => [b.tk, b]));
-  const filas = E.pagos.filter(p => p.fecha >= desde && p.fecha <= hasta && buscar(f.q, p.tk, p.emisor)
+  const filas = E.pagos.filter(p => p.cobro >= desde && p.cobro <= hasta && buscar(f.q, p.tk, p.emisor)
     && (!f.ley || p.ley === f.ley) && (!f.cobra || p.cobra === f.cobra) && (!f.lista || (porTk.has(p.tk) && enLista(porTk.get(p.tk)))));
-  const mes = p => new Date(p.fecha + "T12:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+  const mes = p => new Date(p.cobro + "T12:00").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
   const cols = [
-    { k: "fecha", t: "Fecha", f: p => fecha(p.fecha), v: p => p.fecha },
+    { k: "cobro", t: "Cobro", f: p => fecha(p.cobro) + (p.cobro !== p.fecha ? ` <small class="suave" title="Fecha de pago del prospecto: no hábil, cobra el hábil siguiente">(${fecha(p.fecha).slice(0, 5)})</small>` : ""), v: p => p.cobro },
     { k: "tk", t: "Ticker", f: p => `<span class="tk">${esc(p.tk)}</span>`, v: p => p.tk },
     { k: "emisor", t: "Emisor", cls: "emisor", f: p => esc(p.emisor), v: p => p.emisor },
     { k: "ley", t: "Ley", f: p => p.ley, v: p => p.ley },
@@ -404,7 +379,7 @@ function ficha(b) {
       ${b.calificacion ? dato("Calificación", esc(b.calificacion)) : ""}${b.fuente_flujos && b.fuente_flujos !== "BYMA" ? dato("Flujos", esc(b.fuente_flujos)) : ""}
     </div>
     <div class="tabla-caja"><table><thead><tr><th>Línea</th><th class="n">Compra</th><th class="n">TIR</th><th class="n">Venta</th><th class="n">TIR</th><th class="n">Puntas</th><th class="n">DM</th><th class="n">Vol.</th></tr></thead><tbody>
-      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}</td><td class="n">${num(v?.ask, usd ? 2 : 3)}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${num(v?.bid, usd ? 2 : 3)}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
+      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}</td><td class="n">${conCant(v?.ask, v?.qAsk, usd ? 2 : 3)}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${conCant(v?.bid, v?.qBid, usd ? 2 : 3)}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
     </tbody></table></div>
     ${b.cobra === "CCL" ? `<p class="nota">Cobra cable: la TIR de la línea D supone canje cero al cobro (piso del comprador en MEP).</p>` : ""}
     ${vivos.some(([, v]) => v?.ancho > 0.01) ? `<p class="nota aviso">Puntas de más de 1%: la TIR de la punta no es ejecutable, hace falta orden límite.</p>` : ""}
@@ -584,10 +559,10 @@ function fichaEmisor(x) {
 }
 
 // ---------- navegación ----------
-const PANELES = { ons: pON, pagos: pPagos, soberanos: pSoberanos, pesos: pPesos, pase: pPase, emisores: pEmisores };
-let actual = "ons";
+const PANELES = { dolares: pDolares, pagos: pPagos, pesos: pPesos, pase: pPase, emisores: pEmisores };
+let actual = "dolares";
 function ir(p) {
-  if (!PANELES[p]) p = "ons";
+  if (!PANELES[p]) p = "dolares";   // también las viejas #ons y #soberanos
   actual = p;
   document.querySelectorAll("dialog[open]").forEach(d => d.close());
   document.querySelectorAll(".pestanas button").forEach(b => b.setAttribute("aria-selected", b.dataset.p === p));
@@ -608,5 +583,5 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && E.horaVivo && Date.now() - E.horaVivo > 5 * 60e3) pedirVivo();
 });
 
-cargar().then(() => { estado(); ir(location.hash.slice(1) || "ons"); pedirVivo(); })
+cargar().then(() => { estado(); ir(location.hash.slice(1) || "dolares"); pedirVivo(); })
   .catch(e => { $("#estado").innerHTML = `<span class="error">No pude leer los datos (${esc(e.message)})</span>`; });
