@@ -91,3 +91,34 @@ export function pase({ fA, pA, fB, pB, comVenta, comCompra, reinv }) {
   }
   return out;
 }
+
+// Primaria: flujos por 100 de VN desde la liquidación de la emisión. Los pagos caen cada `meses` desde esa fecha (como en los
+// prospectos) y el último al vencimiento; renta = cupón × meses/12 sobre el valor residual, el período corto final a días/365.
+// Amortización al vencimiento o en `cuotas` partes iguales en los últimos pagos.
+const masMeses = (iso, m) => {
+  const [y, mo, d] = iso.split("-").map(Number), f = new Date(Date.UTC(y, mo - 1 + m, 1));
+  const ult = new Date(Date.UTC(f.getUTCFullYear(), f.getUTCMonth() + 1, 0)).getUTCDate();
+  f.setUTCDate(Math.min(d, ult)); return f.toISOString().slice(0, 10);
+};
+export function flujosPrimaria({ liq, vencimiento, cupon, meses = 6, cuotas = 1 }) {
+  const fechas = [];
+  for (let k = 1; ; k++) { const f = masMeses(liq, k * meses); if (f >= vencimiento) break; fechas.push(f); }
+  fechas.push(vencimiento);
+  const n = Math.min(Math.max(1, Math.round(cuotas)), fechas.length);
+  let vr = 100, previa = liq;
+  return fechas.map((f, i) => {
+    const completo = masMeses(previa, meses) === f;
+    const renta = vr * cupon * (completo ? meses / 12 : dias(previa, f) / 365);
+    const capital = i >= fechas.length - n ? 100 / n : 0;
+    vr -= capital; previa = f;
+    return [dias(liq, f), capital, renta, 0];
+  });
+}
+
+// Bisección genérica sobre una función monótona en [lo, hi].
+export function resolver(g, lo, hi) {
+  if (!(g(lo) * g(hi) <= 0)) return null;
+  const s = g(lo) > 0;
+  for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; (g(m) > 0) === s ? (lo = m) : (hi = m); }
+  return (lo + hi) / 2;
+}

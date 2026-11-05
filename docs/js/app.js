@@ -1,7 +1,7 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde } from "./calc.js";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver } from "./calc.js";
 import { descifrar } from "./descifrar.js";
 import { crearMotor } from "./pesos.js";
 
@@ -418,6 +418,121 @@ function editarLista() {
   dlg.showModal();
 }
 
+// ---------- primaria ----------
+// Primaria contra secundario, los dos netos de la comisión del cliente: la TIR neta de la emisión contra la curva del emisor
+// a la punta vendedora, interpolada a la misma duration. Si la primaria pierde, la orden sale con tasa mínima (o precio máximo).
+E.prim = { emisor: "", ley: "ARG", cobra: "MEP", liq: "", vto: "", cupon: "", precio: "100", meses: "6", cuotas: "1", com: "0,5",
+  extras: "", mismaLey: true, ...guardado.leer("prim", {}) };
+function pPrimaria() {
+  const P = E.prim;
+  const emisores = [...new Set(E.ons.map(b => b.emisor))].sort();
+  const eco = t => { const iso = leerFecha(t); return t ? (iso ? fechaLarga(iso) : "escribe dd/mm/aaaa") : ""; };
+  const el = $("#p-primaria");
+  el.innerHTML = `
+    <datalist id="dl-emisores">${emisores.map(e => `<option value="${esc(e)}">`).join("")}</datalist>
+    <div class="form-pase calc">
+      <div class="tarjeta"><h4>La emisión</h4>
+        <label class="campo">Emisor<input name="emisor" list="dl-emisores" value="${esc(P.emisor)}" placeholder="p. ej. YPF S.A."></label>
+        <div class="fila"><label class="campo">Ley<select name="ley"><option>ARG</option><option>NY</option></select></label>
+          <label class="campo">Cobra<select name="cobra"><option>MEP</option><option>CCL</option></select></label></div>
+        <div class="fila"><label class="campo">Liquidación<input name="liq" inputmode="numeric" value="${esc(P.liq)}" placeholder="${fecha(E.liq)}"><span class="eco">${eco(P.liq)}</span></label>
+          <label class="campo">Vencimiento<input name="vto" inputmode="numeric" value="${esc(P.vto)}" placeholder="dd/mm/aaaa"><span class="eco">${eco(P.vto)}</span></label></div>
+      </div>
+      <div class="tarjeta"><h4>Condiciones</h4>
+        <div class="fila"><label class="campo">Cupón o tasa de corte % TNA<input name="cupon" inputmode="decimal" value="${esc(P.cupon)}" placeholder="p. ej. 8"></label>
+          <label class="campo">Precio de suscripción<input name="precio" inputmode="decimal" value="${esc(P.precio)}"></label></div>
+        <div class="fila"><label class="campo">Paga<select name="meses"><option value="1">Mensual</option><option value="3">Trimestral</option><option value="6">Semestral</option><option value="12">Anual</option></select></label>
+          <label class="campo">Amortiza en (cuotas finales)<input name="cuotas" inputmode="numeric" value="${esc(P.cuotas)}"></label></div>
+      </div>
+      <div class="tarjeta"><h4>Contra el secundario</h4>
+        <label class="campo">Comisión del cliente % (en los dos)<input name="com" inputmode="decimal" value="${esc(P.com)}"></label>
+        <label class="campo">Comparables extra (tickers)<input name="extras" autocapitalize="characters" value="${esc(P.extras)}" placeholder="p. ej. TLCPO, VSCVO"></label>
+        <label class="chip"><input type="checkbox" name="mismaLey"${P.mismaLey ? " checked" : ""}> Del emisor, solo la misma ley</label>
+      </div>
+    </div>
+    <div id="res-prim"></div>`;
+  el.querySelector("[name=ley]").value = P.ley; el.querySelector("[name=cobra]").value = P.cobra; el.querySelector("[name=meses]").value = P.meses;
+  el.querySelectorAll("[name]").forEach(c => c.addEventListener("change", () => {
+    P[c.name] = c.type === "checkbox" ? c.checked : c.value.trim();
+    if (c.name === "emisor") { const b = E.ons.find(x => x.emisor === P.emisor); if (b) { P.ley = b.ley; P.cobra = b.cobra; } }
+    guardado.escribir("prim", P); pPrimaria();
+  }));
+  $("#res-prim").innerHTML = resultadoPrimaria();
+}
+
+function resultadoPrimaria() {
+  const P = E.prim;
+  const liq = leerFecha(P.liq) || E.liq, vto = leerFecha(P.vto), cupon = dec(P.cupon), precio = dec(P.precio) || 100;
+  const com = (dec(P.com) ?? 0) / 100, meses = +P.meses || 6, cuotas = +P.cuotas || 1;
+  if (!vto || cupon == null || vto <= liq) return `<p class="nota">Completa vencimiento (dd/mm/aaaa, posterior a la liquidación) y cupón o tasa de corte para calcular.</p>`;
+  const flujos = c => flujosPrimaria({ liq, vencimiento: vto, cupon: c, meses, cuotas });
+  const fl = flujos(cupon / 100);
+  const yBruta = tir(fl, precio), yNeta = tir(fl, precio * (1 + com));
+  if (yNeta == null) return `<p class="nota aviso">No pude calcular la TIR de la emisión con esas condiciones.</p>`;
+  const dmP = duration(fl, yNeta).modificada;
+
+  // comparables: ONs del emisor (calculables) y los tickers extra, a la punta vendedora de la línea D más la comisión
+  const todos = [...E.ons, ...E.soberanos].filter(b => b.calculable);
+  const extras = P.extras.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  const comps = todos.filter(b => (P.emisor && b.emisor === P.emisor && (!P.mismaLey || b.ley === P.ley)) || extras.includes(b.tk))
+    .map(b => { const v = enVivo(b, "D"); const y = v?.ask ? tir(v.flujos, v.ask * (1 + com)) : null;
+      return { b, v, y, dm: y != null ? duration(v.flujos, y).modificada : null }; })
+    .sort((a, b) => (a.dm ?? 99) - (b.dm ?? 99));
+  // la curva de referencia usa los que cobran en la misma moneda que la emisión, si los hay (canje cero distorsiona la línea D)
+  const conPunta = comps.filter(c => c.y != null), misma = conPunta.filter(c => c.b.cobra === P.cobra);
+  const curva = misma.length ? misma : conPunta;
+  const faltan = extras.filter(t => !todos.some(b => b.tk === t));
+
+  // lineal en DM entre los dos vecinos; fuera de la curva, la recta de los dos más cercanos de ese lado (o plano si hay uno)
+  let yRef = null, base = "", fuera = false, usados = [];
+  if (curva.length) {
+    const antes = curva.filter(c => c.dm <= dmP), despues = curva.filter(c => c.dm > dmP);
+    usados = antes.length && despues.length ? [antes.at(-1), despues[0]] : antes.length ? antes.slice(-2) : despues.slice(0, 2);
+    fuera = !(antes.length && despues.length);
+    const [a, b] = usados;
+    yRef = b && b.dm !== a.dm ? a.y + (dmP - a.dm) / (b.dm - a.dm) * (b.y - a.y) : a.y;
+    base = (fuera ? (b ? "extrapolado de " : "plano desde ") : "entre ") + usados.map(c => c.b.tk).join(" y ");
+  }
+  const ref = new Set(usados.map(c => c.b.tk));
+
+  let veredicto, orden = "";
+  if (yRef == null) veredicto = `La emisión rinde <b>${pct(yNeta)}</b> neto de comisión (DM ${num(dmP)}). Sin comparables con punta: elige el emisor o agrega tickers.`;
+  else {
+    const dif = (yNeta - yRef) * 1e4, gana = dif >= 0;
+    veredicto = `La primaria rinde <b>${pct(yNeta)}</b> neto; el secundario a la misma duration (${num(dmP)}) rinde <b>${pct(yRef)}</b> neto (${esc(base)}):
+      la primaria <b class="${gana ? "pos" : "neg"}">${gana ? "paga" : "pierde"} ${num(Math.abs(dif), 0)} pb</b> ${gana ? "más" : "contra el secundario"}.`;
+    const cMin = resolver(c => tir(flujos(c), precio * (1 + com)) - yRef, 0, 1);
+    const pMax = vp(fl, yRef) / (1 + com);
+    orden = `<p class="nota">Para empatar el secundario: tasa de corte mínima <b>${pct(cMin)}</b> a precio ${num(precio)}, o precio máximo <b>${num(pMax)}</b> con cupón ${pct(cupon / 100)}.${gana ? "" : " La orden sale con ese límite, no sin precio."}</p>`;
+  }
+
+  const avisos = [];
+  if (fuera) avisos.push(`La emisión cae fuera de la curva del emisor (DM ${num(curva[0].dm)} a ${num(curva.at(-1).dm)}): la referencia está extrapolada, tómala con cuidado.`);
+  if (misma.length && misma.length < conPunta.length) avisos.push(`La referencia usa solo los que cobran ${P.cobra}; los demás quedan a la vista sin entrar en la curva.`);
+  if (P.cobra === "CCL" || curva.some(c => c.b.cobra === "CCL")) avisos.push("Los que cobran cable se miden en la línea D con canje cero al cobro.");
+  if (curva.some(c => c.v.ancho > 0.01)) avisos.push(`Puntas de más de 1% en ${curva.filter(c => c.v.ancho > 0.01).map(c => c.b.tk).join(", ")}: su TIR no es ejecutable sin orden límite.`);
+  if (faltan.length) avisos.push(`Sin flujos de tasa fija en la base: ${faltan.join(", ")}.`);
+  if (P.emisor && P.mismaLey && !comps.some(c => c.b.emisor === P.emisor) && E.ons.some(b => b.emisor === P.emisor))
+    avisos.push(`${P.emisor} no tiene ONs ley ${P.ley} con flujos: destilda «solo la misma ley» o agrega comparables.`);
+
+  const filas = comps.map(c => `<tr><td><span class="tk">${esc(c.b.tk)}</span>${ref.has(c.b.tk) ? ' <span class="etq">ref.</span>' : ""}</td><td>${c.b.ley}</td><td>${c.b.cobra}</td>
+    <td>${fecha(c.b.vencimiento)}</td><td class="n">${conCant(c.v?.ask, c.v?.qAsk)}</td><td class="n">${pct(c.y)}</td><td class="n">${num(c.dm)}</td>
+    <td class="n ${c.v?.ancho > 0.01 ? "aviso" : ""}">${pct(c.v?.ancho)}</td></tr>`).join("");
+  return `
+    <div class="tarjeta">
+      <div class="datos">
+        ${dato("TIR bruta", pct(yBruta))}${dato("TIR neta", pct(yNeta))}${dato("DM", num(dmP))}
+        ${yRef != null ? dato("Secundario neto", pct(yRef)) + dato("Diferencia", pb((yNeta - yRef) * 1e4) + " pb") : ""}
+      </div>
+      <div class="veredicto">${veredicto}</div>
+      ${orden}
+      ${comps.length ? `<div class="tabla-caja"><table><thead><tr><th>Comparable</th><th>Ley</th><th>Cobra</th><th>Vto.</th><th class="n">Compra D</th><th class="n">TIR neta</th><th class="n">DM</th><th class="n">Puntas</th></tr></thead><tbody>${filas}</tbody></table></div>` : ""}
+      <p class="nota">Emisión: liquida ${fecha(liq)}, ${fl.length} pagos, renta sobre valor residual (período corto final a días/365; confirmar la convención en el prospecto). Secundario: liquida ${fecha(E.liq)}, a la punta vendedora más ${pct(com)}.</p>
+      ${avisos.map(a => `<p class="nota aviso">${esc(a)}</p>`).join("")}
+      <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>
+    </div>`;
+}
+
 // ---------- pase ----------
 E.pase = { vendo: "", compro: "", linea: "D", pv: "", pc: "", cv: "0.5", cc: "0.5", reinv: "", ...guardado.leer("pase", {}) };
 function pPase() {
@@ -461,7 +576,7 @@ function pPase() {
 const dec = s => s === "" || s == null ? null : +String(s).replace(",", ".");
 function resultadoPase(A, B, vA, vB) {
   const P = E.pase;
-  if (!A || !B) return `<p class="nota">Elige el bono que vendes y el que compras (ONs y bonos en dólares con flujos de tasa fija). Toca una fila de ONs o Soberanos para mandarla acá.</p>`;
+  if (!A || !B) return `<p class="nota">Elige el bono que vendes y el que compras (ONs y bonos en dólares con flujos de tasa fija). Toca una fila de Dólares para mandarla acá.</p>`;
   const pA = dec(P.pv) ?? vA?.bid, pB = dec(P.pc) ?? vB?.ask;
   if (!pA || !pB) return `<p class="nota aviso">Falta precio: ${!pA ? A.tk + " sin punta compradora" : ""} ${!pB ? B.tk + " sin punta vendedora" : ""} en la línea ${P.linea}. Escríbelo a mano o actualiza las puntas.</p>`;
   const fA = alinear(A.flujos, A.liq, E.liq), fB = alinear(B.flujos, B.liq, E.liq);
@@ -559,7 +674,7 @@ function fichaEmisor(x) {
 }
 
 // ---------- navegación ----------
-const PANELES = { dolares: pDolares, pagos: pPagos, pesos: pPesos, pase: pPase, emisores: pEmisores };
+const PANELES = { dolares: pDolares, primaria: pPrimaria, pagos: pPagos, pesos: pPesos, pase: pPase, emisores: pEmisores };
 let actual = "dolares";
 function ir(p) {
   if (!PANELES[p]) p = "dolares";   // también las viejas #ons y #soberanos
