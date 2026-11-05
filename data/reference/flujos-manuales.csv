@@ -1,0 +1,7 @@
+ticker,emisor,clase,ley,cobra,fuente_cobro,cupon,frecuencia,emision,vencimiento,fecha,renta,amortizacion,fuente
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2027-05-03,3.35,0,dato del usuario 5-nov-2026 (cashflow por 100 VN)
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2027-11-03,3.40,0,dato del usuario 5-nov-2026 (cashflow por 100 VN)
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2028-05-03,3.37,0,dato del usuario 5-nov-2026 (cashflow por 100 VN)
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2028-11-03,3.40,0,dato del usuario 5-nov-2026 (cashflow por 100 VN)
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2029-05-03,3.35,0,dato del usuario 5-nov-2026 (cashflow por 100 VN)
+CICDO,CNH INDUSTRIAL CAPITAL ARGENTINA S.A.,,ARG,MEP,inferido: resto de las ONs locales de CNH,0.0675,Semestral,2026-11-03,2029-11-03,2029-11-03,3.40,100,dato del usuario 5-nov-2026 (cashflow por 100 VN)

@@ -24,6 +24,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "docs/data"
 CHAMO = RAIZ / "data/reference/ons-chamomberg.csv"
+MANUALES = RAIZ / "data/reference/flujos-manuales.csv"  # ONs que no están en BYMA ni en chamomberg
 URL = "https://tablero.bymaeduca.com.ar/"
 CHAMO_WEB = "https://chamomberg.com/"
 
@@ -138,6 +139,23 @@ def main():
                 "sector": None, "cobra": fila.get("paga_chamomberg") or None, "fuente_cobro": "chamomberg",
                 "cobra_byma": None, "chamomberg": True, "calificacion": fila.get("calificacion_chamomberg") or None,
                 "emitido": None})
+    en_base = {o["tk"] for o in ons}
+    manuales = {}
+    for f in csv.DictReader(open(MANUALES)) if MANUALES.exists() else []:
+        if f["ticker"] not in en_base:
+            manuales.setdefault(f["ticker"], []).append(f)
+    d0 = dt.date.fromisoformat(liq)
+    for tk, filas in manuales.items():
+        f = filas[0]
+        flujos = [[(dt.date.fromisoformat(x["fecha"]) - d0).days, float(x["amortizacion"]), float(x["renta"]), 0.0]
+                  for x in filas if dt.date.fromisoformat(x["fecha"]) > d0]
+        ons.append({"tk": tk, "emisor": f["emisor"], "clase": f["clase"] or None, "isin": "", "ley": f["ley"],
+                    "moneda": "USD", "estructura": "Tasa Fija", "cupon": float(f["cupon"]), "frecuencia": f["frecuencia"],
+                    "vencimiento": f["vencimiento"], "vr": 100.0,
+                    "cierre": {"px": None, "ytm": None, "dm": None, "adtv_usd": None, "fx": None, "fxr": None},
+                    "tipo_flujos": "fix", "liq": liq, "flujos": redondear(flujos), "fuente_flujos": f["fuente"],
+                    "sector": None, "cobra": f["cobra"], "fuente_cobro": f["fuente_cobro"], "cobra_byma": None,
+                    "chamomberg": tk in chamo, "calificacion": None, "emitido": None})
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
     pagos = []
@@ -165,6 +183,7 @@ def main():
             "ons_chamomberg": sum(o["chamomberg"] for o in ons),
             "sin_flujos": [o["tk"] for o in ons if not o["flujos"]],
             "flujos_chamomberg": [o["tk"] for o in ons if o.get("fuente_flujos") == "chamomberg"],
+            "flujos_manuales": sorted(manuales),
             "chamomberg_sin_dato": sin_dato}
     meta_previa = SALIDA / "meta.json"
     if meta_previa.exists():  # emisores.json lo escribe otro script: no pisar su fecha
