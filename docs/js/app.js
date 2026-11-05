@@ -70,13 +70,15 @@ async function cargar() {
   const leer = n => fetch(`data/${n}.json`, { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error(n); return r.json(); });
   const [meta, ons, sob, pesos, pagos] = await Promise.all(["meta", "ons", "soberanos", "pesos", "pagos"].map(leer));
   E.meta = meta;
-  E.ons = ons.map(x => normalizar(x, "on"));
+  // universo: solo las ONs de chamomberg (lo que distribuye Balanz), en todas las pestañas
+  E.ons = ons.filter(x => x.chamomberg).map(x => normalizar(x, "on"));
   E.soberanos = sob.map(x => normalizar(x, "sob"));
   E.pesos = pesos.map(x => normalizar(x, "ars"));
   try { E.motor_meta = await leer("motor_pesos"); fijarFeriados(E.motor_meta.feriados); E.motor = crearMotor(pesos, E.motor_meta, meta); } catch (e) { console.error(e); E.motor = null; }
   E.liq = liquidacionHoy();
   // el pago que cae en sábado, domingo o feriado se cobra el hábil siguiente
-  E.pagos = pagos.map(p => ({ ...p, cobro: habilDesde(p.fecha) }));
+  const fuera = new Set(ons.filter(x => !x.chamomberg).map(x => x.tk));
+  E.pagos = pagos.filter(p => !fuera.has(p.tk)).map(p => ({ ...p, cobro: habilDesde(p.fecha) }));
 }
 
 async function pedirVivo() {
@@ -180,16 +182,15 @@ function colsDolares() {
 const TIPOS = { on: "ONs", sob: "Soberanos", pro: "Provinciales" };
 const tipoDe = b => b.tipo === "on" ? "on" : b.segmento;
 function pDolares() {
-  const id = "dolares", f = filtro(id, { q: "", tipo: "", ley: "", cobra: "", lista: false, chamo: false, vivo: false });
+  const id = "dolares", f = filtro(id, { q: "", tipo: "", ley: "", cobra: "", lista: false, vivo: false });
   const todos = [...E.ons, ...E.soberanos];
   const filas = todos.filter(b => buscar(f.q, b.tk, b.emisor, b.clase) && (!f.tipo || tipoDe(b) === f.tipo)
     && (!f.ley || b.ley === f.ley) && (!f.cobra || b.cobra === f.cobra)
-    && (!f.lista || enLista(b)) && (!f.chamo || b.chamomberg) && (!f.vivo || enVivo(b, "D")?.ask));
+    && (!f.lista || enLista(b)) && (!f.vivo || enVivo(b, "D")?.ask));
   $("#p-dolares").replaceChildren(
     barraFiltros(id, f, `<input type="search" name="q" placeholder="Ticker o emisor">
       <select name="tipo"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
       ${selLey}${selCobra}${chipLista}
-      <label class="chip"><input type="checkbox" name="chamo"> Universo chamomberg</label>
       <label class="chip"><input type="checkbox" name="vivo"> Con punta</label>`),
     nota(`${filas.length} de ${todos.length} bonos hard dollar · la cifra chica es el nominal a la punta · la línea D de un bono que cobra CCL supone canje cero`),
     tabla(id, filas, colsDolares(), { alClick: ficha, clase: b => enLista(b) ? "mia" : "",
