@@ -19,14 +19,17 @@ import datetime as dt
 import json
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "docs/data"
 CHAMO = RAIZ / "data/reference/ons-chamomberg.csv"
 MANUALES = RAIZ / "data/reference/flujos-manuales.csv"  # ONs que no están en BYMA ni en chamomberg
+LAMINAS = RAIZ / "data/reference/laminas.csv"  # regla de negociación confirmada en el prospecto: manda sobre chamomberg
 URL = "https://tablero.bymaeduca.com.ar/"
 CHAMO_WEB = "https://chamomberg.com/"
+FICHA_BYMA = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/bnown/fichatecnica/especies/general"
 
 
 def cargar():
@@ -71,6 +74,24 @@ def flujos_chamomberg():
                 continue
             if o.get("flows"):
                 out.setdefault(m.group(1)[:-1], o)
+    return out
+
+
+def denominaciones_byma(tickers):
+    """Denominación mínima de la ficha técnica de BYMA (open.bymadata), por ticker; la que no responde queda afuera."""
+    def una(tk):
+        pedido = urllib.request.Request(FICHA_BYMA, data=json.dumps({"symbol": tk, "Content-Type": "application/json"}).encode(),
+                                        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        try:
+            d = json.loads(urllib.request.urlopen(pedido, timeout=30).read()).get("data") or []
+            v = d[0].get("denominacionMinima") if d else None
+            return tk, float(v) if v else None
+        except Exception:
+            return tk, None
+    out = {}
+    for hilos in (8, 2, 1):  # BYMA corta pedidos cuando van muchos juntos: lo que falla se reintenta más despacio
+        with ThreadPoolExecutor(hilos) as ex:
+            out |= {tk: v for tk, v in ex.map(una, [t for t in tickers if t not in out]) if v}
     return out
 
 
@@ -174,13 +195,22 @@ def main():
                 if len(cand) == 1:
                     o["emisor"] = next(iter(cand))
                     break
-    for o in ons:
-        o["lamina"] = (extra.get(o["tk"][:-1]) or {}).get("min")
-    ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
-
+    # regla de negociación: lámina mínima y de ahí de a `incremento`. El mínimo: laminas.csv (prospecto) > ficha técnica de BYMA
+    # > chamomberg. El incremento no lo publica nadie: laminas.csv o null, y la página lo infiere de las cantidades en las puntas
+    manual = {}
+    if LAMINAS.exists():
+        with LAMINAS.open(newline="", encoding="utf-8") as f:
+            manual = {r["prefijo"].strip().upper(): r for r in csv.DictReader(r for r in f if not r.startswith("#"))}
     tp = d["tp"]["rows"]
     soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"]}
                  for r in tp if r["me"] == "USD" and r["seg"] in ("sob", "pro")]
+    byma = denominaciones_byma([o["tk"] for o in ons + soberanos])
+    for o in ons + soberanos:
+        m, ch = manual.get(o["tk"][:-1]), (extra.get(o["tk"][:-1]) or {}).get("min") if o in ons else None
+        o["lamina"], o["lamina_fuente"] = ((float(m["minimo"]), "prospecto") if m else (byma[o["tk"]], "BYMA") if o["tk"] in byma
+                                           else (ch, "chamomberg") if ch else (None, None))
+        o["incremento"] = float(m["incremento"]) if m and m.get("incremento") else None
+    ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
 
     # calendario de pagos: ONs, soberanos y provinciales en dólares (los bonos ley NY cobran cable, los de ley argentina MEP)
     pagos = []

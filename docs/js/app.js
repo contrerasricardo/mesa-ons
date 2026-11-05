@@ -1,7 +1,7 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver } from "./calc.js";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js";
 import { descifrar } from "./descifrar.js";
 import { crearMotor } from "./pesos.js";
 
@@ -423,13 +423,43 @@ function editarLista() {
 
 // ---------- ticket ----------
 // Orden en dólares: con el monto, el VN redondeado hacia abajo a la lámina mínima, la comisión y lo que sobra; con el VN a vender,
-// lo que entra neto. Lámina de chamomberg (soberanos: 1); la que se escribe a mano queda guardada por ticker.
+// lo que entra neto. Regla de negociación (mínimo y de ahí de a `inc`): la escrita a mano (guardada por ticker) > la de la base
+// (prospecto, ficha técnica de BYMA o chamomberg; solo el prospecto trae el incremento). Sin incremento se infiere de las órdenes:
+// cada orden es mínimo + k·inc, así que el MCD entre el mínimo y las cantidades en las puntas es siempre un paso válido.
 E.ticket = { lado: "compro", monto: "10000", vn: "", com: "0,5", ...guardado.leer("ticket", {}) };
 E.laminas = guardado.leer("laminas", {});
-const laminaDe = b => E.laminas[b.tk] ?? b.lamina ?? (b.segmento === "sob" ? 1 : null);
+const mcd = (a, b) => { a = Math.round(a); b = Math.round(b); while (b) [a, b] = [b, a % b]; return a; };
+function cantidadesPuntas(b) {
+  return [...new Set(Object.values(b.lineas || {}))].flatMap(t => { const q = E.vivo.get(t); return q ? [q.q_bid, q.q_ask] : []; }).filter(q => q > 0);
+}
+function reglaDe(b) {
+  let m = E.laminas[b.tk];
+  if (typeof m === "number") m = { min: m, inc: null };
+  const min = m?.min || b.lamina, fuente = m?.min ? "a mano" : b.lamina ? b.lamina_fuente || "base" : "sin dato";
+  if (!min) return { min: 1, inc: 1, fuente, supuesto: true, sinDato: true };
+  const inc = m?.min ? m.inc : b.incremento;
+  if (inc) return { min, inc, fuente, incFuente: m?.min ? "a mano" : "prospecto" };
+  if (min === 1) return { min, inc: 1, fuente, incFuente: "de a 1" };
+  const qs = cantidadesPuntas(b), menor = qs.filter(q => q + 1e-9 < min);
+  const g = qs.filter(q => q + 1e-9 >= min).reduce(mcd, min);
+  return { min, inc: g, fuente, incFuente: g < min ? "inferido de las puntas" : "supuesto = mínimo", supuesto: true, menor };
+}
+function avisosRegla(b, L) {
+  const a = [];
+  if (L.incFuente === "supuesto = mínimo") a.push(`${b.tk}: incremento supuesto igual al mínimo (las puntas no muestran cantidades que lo contradigan); si el prospecto permite de a menos, escríbelo.`);
+  if (L.incFuente === "inferido de las puntas") a.push(`${b.tk}: incremento de ${num(L.inc, 0)} inferido de las cantidades en las puntas (siempre un paso válido; el real puede ser menor).`);
+  if (L.menor?.length) a.push(`${b.tk}: hay puntas con menos que el mínimo de ${num(L.min, 0)} (${L.menor.map(q => num(q, 0)).join(", ")} VN): o el mínimo es menor, o son restos de tenencias.`);
+  return a;
+}
+const textoRegla = L => L.min === L.inc ? `de ${num(L.min, 0)} en ${num(L.inc, 0)}` : `mínimo ${num(L.min, 0)} y de a ${num(L.inc, 0)}`;
+const guardarRegla = (b, minTxt, incTxt) => {
+  const min = dec(minTxt), inc = dec(incTxt), L = reglaDe(b);
+  if (min === L.min && inc === L.inc) return;
+  if (min) E.laminas[b.tk] = { min, inc: inc || null }; else delete E.laminas[b.tk];
+  guardado.escribir("laminas", E.laminas);
+};
 function ticketHTML(b, lineas) {
-  const T = E.ticket, lam = laminaDe(b);
-  const fuente = E.laminas[b.tk] != null ? "a mano" : b.lamina != null ? "chamomberg" : b.segmento === "sob" ? "soberano" : "sin dato: escríbela";
+  const T = E.ticket, L = reglaDe(b);
   return `<div class="tarjeta ticket"><h4>Ticket</h4>
     <div class="form-calc">
       <label class="campo">Línea<select name="t-linea">${lineas.map(l => `<option value="${l}">${esc(b.lineas[l])}</option>`).join("")}</select></label>
@@ -438,7 +468,8 @@ function ticketHTML(b, lineas) {
       <label class="campo" data-solo="vendo">VN a vender<input name="t-vn" inputmode="decimal" value="${esc(T.vn)}"></label>
       <label class="campo">Precio (vacío = punta)<input name="t-px" inputmode="decimal" placeholder=""></label>
       <label class="campo">Comisión %<input name="t-com" inputmode="decimal" value="${esc(T.com)}"></label>
-      <label class="campo">Lámina mínima (${esc(fuente)})<input name="t-lam" inputmode="decimal" value="${lam ?? ""}"></label>
+      <label class="campo">Lámina mínima (${esc(L.fuente)})<input name="t-lam" inputmode="decimal" value="${L.sinDato ? "" : L.min}"></label>
+      <label class="campo">Incremento (${esc(L.sinDato ? "sin dato" : L.incFuente)})<input name="t-inc" inputmode="decimal" value="${L.sinDato ? "" : L.inc}"></label>
     </div>
     <div class="t-res"></div></div>`;
 }
@@ -449,14 +480,15 @@ function atarTicket(dlg, b) {
   const calcular = () => {
     T.lado = c("lado").value; T.monto = c("monto").value; T.vn = c("vn").value; T.com = c("com").value;
     guardado.escribir("ticket", T);
-    const lamTxt = c("lam").value.trim();
-    if (lamTxt !== String(laminaDe(b) ?? "")) { lamTxt ? (E.laminas[b.tk] = dec(lamTxt)) : delete E.laminas[b.tk]; guardado.escribir("laminas", E.laminas); }
+    const lamTxt = c("lam").value.trim(), incTxt = c("inc").value.trim();
+    guardarRegla(b, lamTxt, incTxt);
+    const L = reglaDe(b);
     caja.querySelectorAll("[data-solo]").forEach(l => l.hidden = l.dataset.solo !== T.lado);
     const linea = c("linea").value, v = enVivo(b, linea), compro = T.lado === "compro";
     const punta = compro ? v?.ask : v?.bid, cant = compro ? v?.qAsk : v?.qBid;
     c("px").placeholder = punta ? num(punta) : "sin punta";
     caja.querySelector(".t-res").innerHTML = resultadoTicket(b, { compro, px: dec(c("px").value) ?? punta, punta, cant,
-      com: (dec(T.com) ?? 0) / 100, lam: dec(lamTxt) || 1, sinLam: !lamTxt, monto: dec(String(T.monto).replace(/\./g, "")), vn: dec(String(T.vn).replace(/\./g, "")),
+      com: (dec(T.com) ?? 0) / 100, L, monto: dec(String(T.monto).replace(/\./g, "")), vn: dec(String(T.vn).replace(/\./g, "")),
       flujos: v?.flujos ?? [], moneda: linea === "C" ? "US$ cable" : "US$ MEP" });
   };
   caja.querySelectorAll("input, select").forEach(e => e.addEventListener("input", calcular));
@@ -468,22 +500,23 @@ function resultadoTicket(b, o) {
   let filas, vn;
   if (o.compro) {
     if (!(o.monto > 0)) return `<p class="nota">Escribe el monto.</p>`;
-    vn = Math.floor(o.monto / (x * (1 + o.com)) / o.lam + 1e-9) * o.lam;
-    if (!vn) return `<p class="nota aviso">No alcanza para una lámina: el mínimo es ${num(o.lam, 0)} VN, unos ${o.moneda} ${num(o.lam * x * (1 + o.com))}.</p>`;
+    vn = redondearVN(o.monto / (x * (1 + o.com)), o.L);
+    if (!vn) return `<p class="nota aviso">No alcanza para una lámina: el mínimo es ${num(o.L.min, 0)} VN, unos ${o.moneda} ${num(o.L.min * x * (1 + o.com))}.</p>`;
     const bruto = vn * x, com = bruto * o.com, y = o.flujos.length ? tir(o.flujos, o.px * (1 + o.com)) : null;
     filas = [["VN a comprar", num(vn, 0)], ["Bruto", num(bruto)], ["Comisión", num(com)], ["Total a pagar", `<b>${num(bruto + com)}</b>`],
       ["Sobra", num(o.monto - bruto - com)], ["TIR neta", pct(y)]];
   } else {
     if (!(o.vn > 0)) return `<p class="nota">Escribe el VN a vender.</p>`;
     vn = o.vn;
-    if (Math.abs(vn / o.lam - Math.round(vn / o.lam)) > 1e-9) avisos.push(`${num(vn, 0)} no es múltiplo de la lámina de ${num(o.lam, 0)}.`);
+    if (!vnValido(vn, o.L)) avisos.push(`${num(vn, 0)} VN no respeta la regla (${textoRegla(o.L)}); salvo que sea toda la tenencia, lo más cercano es ${num(redondearVN(vn, o.L), 0)}.`);
     const bruto = vn * x, com = bruto * o.com;
     filas = [["VN a vender", num(vn, 0)], ["Bruto", num(bruto)], ["Comisión", num(com)], ["Neto a cobrar", `<b>${num(bruto - com)}</b>`]];
   }
   if (o.cant > 0 && vn > o.cant && o.px === o.punta) avisos.push(`La punta ${o.compro ? "vendedora" : "compradora"} tiene ${num(o.cant, 0)} VN: el resto queda en el libro a otro precio.`);
-  if (o.sinLam) avisos.push("Sin lámina mínima en la base: calculado de a 1 VN; confírmala antes de cargar la orden.");
+  if (o.L.sinDato) avisos.push("Sin lámina mínima en la base: calculado de a 1 VN; confírmala antes de cargar la orden.");
+  else avisos.push(...avisosRegla(b, o.L));
   return `<div class="datos">${filas.map(([t, v]) => dato(t, v)).join("")}</div>
-    <p class="nota">En ${o.moneda}, a ${num(o.px)} por 100 de VN original.</p>
+    <p class="nota">En ${o.moneda}, a ${num(o.px)} por 100 de VN original · regla ${textoRegla(o.L)}.</p>
     ${avisos.map(a => `<p class="nota aviso">${esc(a)}</p>`).join("")}
     <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`;
 }
@@ -604,7 +637,7 @@ function resultadoPrimaria() {
 }
 
 // ---------- pase ----------
-E.pase = { vendo: "", compro: "", linea: "D", pv: "", pc: "", cv: "0.5", cc: "0.5", reinv: "", ...guardado.leer("pase", {}) };
+E.pase = { vendo: "", compro: "", linea: "D", pv: "", pc: "", cv: "0.5", cc: "0.5", reinv: "", vn: "10000", ...guardado.leer("pase", {}) };
 function pPase() {
   const P = E.pase;
   const universo = [...E.ons, ...E.soberanos].filter(b => b.calculable);
@@ -618,12 +651,15 @@ function pPase() {
       <div class="tarjeta"><h4>Vendo</h4>
         <label class="campo">Ticker<input name="vendo" list="dl-bonos" autocapitalize="characters" value="${esc(P.vendo)}" placeholder="p. ej. YM34O"></label>
         <label class="campo">Precio (punta compradora${vA?.bid ? ": " + num(vA.bid) : ""})<input name="pv" inputmode="decimal" value="${esc(P.pv)}" placeholder="${vA?.bid ?? ""}"></label>
+        <label class="campo">VN que vendo${A ? ` (${textoRegla(reglaDe(A))})` : ""}<input name="vn" inputmode="decimal" value="${esc(P.vn)}"></label>
         <div class="suave">${A ? esc(A.emisor) + " · vence " + fecha(A.vencimiento) + " · cobra " + A.cobra : ""}</div>
       </div>
       <div class="tarjeta"><h4>Compro</h4>
         <label class="campo">Ticker<input name="compro" list="dl-bonos" autocapitalize="characters" value="${esc(P.compro)}" placeholder="p. ej. TLCPO"></label>
         <label class="campo">Precio (punta vendedora${vB?.ask ? ": " + num(vB.ask) : ""})<input name="pc" inputmode="decimal" value="${esc(P.pc)}" placeholder="${vB?.ask ?? ""}"></label>
         <div class="suave">${B ? esc(B.emisor) + " · vence " + fecha(B.vencimiento) + " · cobra " + B.cobra : ""}</div>
+        ${B ? `<div class="fila"><label class="campo">Lámina mínima (${esc(reglaDe(B).fuente)})<input name="lamB" inputmode="decimal" value="${reglaDe(B).sinDato ? "" : reglaDe(B).min}"></label>
+          <label class="campo">Incremento (${esc(reglaDe(B).sinDato ? "sin dato" : reglaDe(B).incFuente)})<input name="incB" inputmode="decimal" value="${reglaDe(B).sinDato ? "" : reglaDe(B).inc}"></label></div>` : ""}
       </div>
       <div class="tarjeta"><h4>Supuestos</h4>
         <label class="campo">Línea<select name="linea"><option value="D">D (MEP)</option><option value="C">C (cable)</option></select></label>
@@ -635,9 +671,10 @@ function pPase() {
     <div id="res-pase"></div>`;
   el.querySelector("[name=linea]").value = P.linea;
   el.querySelectorAll("[name]").forEach(c => c.addEventListener("change", () => {
-    P[c.name] = c.value.trim();
+    if (c.name === "lamB" || c.name === "incB") guardarRegla(B, el.querySelector("[name=lamB]").value.trim(), el.querySelector("[name=incB]").value.trim());
+    else P[c.name] = c.value.trim();
     if (c.name === "vendo") P.pv = ""; if (c.name === "compro") P.pc = "";
-    guardado.escribir("pase", { vendo: P.vendo, compro: P.compro, linea: P.linea, cv: P.cv, cc: P.cc, reinv: P.reinv });
+    guardado.escribir("pase", { vendo: P.vendo, compro: P.compro, linea: P.linea, cv: P.cv, cc: P.cc, reinv: P.reinv, vn: P.vn });
     pPase();
   }));
   $("#res-pase").innerHTML = resultadoPase(A, B, vA, vB);
@@ -662,6 +699,7 @@ function resultadoPase(A, B, vA, vB) {
   if (A.cobra !== B.cobra) avisos.push(`Cambia la moneda de cobro (${A.cobra} → ${B.cobra}): el canje entra en la cuenta.`);
   [[A, vA], [B, vB]].forEach(([b, v]) => v?.ancho > 0.01 && avisos.push(`${b.tk}: puntas de ${pct(v.ancho)}, hace falta orden límite.`));
   const bueno = r.bVenceAntes ? r.mejora > 0 : r.ensanchePb > 0;
+  const nom = nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos);
   return `
     <div class="tarjeta">
       <div class="datos">
@@ -675,10 +713,56 @@ function resultadoPase(A, B, vA, vB) {
           : `Al vencimiento de ${esc(A.tk)} (${fecha(vtoA)}), si ${esc(B.tk)} mantiene su TIR el pase <b class="${r.mejora > 0 ? "pos" : "neg"}">${r.mejora > 0 ? "suma" : "resta"} ${pct(Math.abs(r.mejora))}</b> neto de comisiones.
              TIR de quiebre de ${esc(B.tk)} ese día: <b>${pct(r.tirQuiebre)}</b> → <b class="${bueno ? "pos" : "neg"}">${bueno ? "aguanta" : "ya pierde con"} ${pb(Math.abs(r.ensanchePb))} pb ${bueno ? "de ensanchamiento" : "de compresión necesaria"}</b>.`}
       </div>
+      ${nom}
       <p class="nota">Flujos exactos de los dos bonos, cupones reinvertidos al ${pct(reinv)}. Regla rápida: (TIR compra − TIR venta) × vida de ${esc(A.tk)} (${num(r.T / 365, 1)} años) − comisiones = ${pct(rapida)}.</p>
       ${avisos.map(a => `<p class="nota aviso">${esc(a)}</p>`).join("")}
       <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>
     </div>`;
+}
+
+// Pase con nominales reales: lo que entra al vender A, el VN de B redondeado a su regla de negociación, lo que sobra en caja
+// y los dos cashflows lado a lado, fecha por fecha de cobro.
+function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
+  const P = E.pase, vnA = dec(String(P.vn).replace(/\./g, "")), LA = reglaDe(A), LB = reglaDe(B);
+  if (!(vnA > 0)) return `<p class="nota">Escribe el VN que vendes para ver los nominales y los cashflows.</p>`;
+  const cv = (dec(P.cv) ?? 0) / 100, cc = (dec(P.cc) ?? 0) / 100;
+  const neto = vnA * pA / 100 * (1 - cv);
+  const vnB = redondearVN(neto / (pB / 100 * (1 + cc)), LB), costo = vnB * pB / 100 * (1 + cc), sobra = neto - costo;
+  if (!vnValido(vnA, LA)) avisos.push(`${num(vnA, 0)} VN de ${A.tk} no respeta su regla (${textoRegla(LA)}): solo vale si es toda la tenencia.`);
+  if (LB.sinDato) avisos.push(`${B.tk} sin lámina en la base: calculado de a 1 VN; confírmala antes de cargar la orden.`);
+  else avisos.push(...avisosRegla(B, LB));
+  if (!vnB) return `<p class="nota aviso">Con ${num(neto)} netos no alcanza para la lámina mínima de ${B.tk} (${num(LB.min, 0)} VN, unos ${num(LB.min * pB / 100 * (1 + cc))}).</p>`;
+  // al vencimiento de A: quedarse con A contra B + la caja que sobra, todo reinvertido a la misma tasa (B valuado a su TIR de hoy si sigue vivo)
+  const restoB = fB.filter(f => f[0] > r.T).map(([d, c, x, a]) => [d - r.T, c, x, a]);
+  const quedarse = vnA / 100 * valorAl(fA, r.T, reinv);
+  const pasar = vnB / 100 * (valorAl(fB, r.T, reinv) + (restoB.length ? vp(restoB, r.yB) : 0)) + sobra * (1 + reinv) ** (r.T / 365);
+  // cashflows por fecha de cobro (día hábil)
+  const filas = new Map(), sumar = (fl, vn, lado) => fl.forEach(f => {
+    const d = habilDesde(mas(E.liq, f[0])), x = filas.get(d) || { d, a: 0, b: 0 };
+    x[lado] += vn / 100 * (f[1] + f[2] + (f[3] || 0)); filas.set(d, x);
+  });
+  sumar(fA, vnA, "a"); sumar(fB, vnB, "b");
+  const vtoA = habilDesde(mas(E.liq, r.T));
+  let acA = 0, acB = sobra;
+  const tb = [...filas.values()].sort((x, y) => x.d < y.d ? -1 : 1).map(x => {
+    acA += x.a; acB += x.b;
+    return `<tr class="${x.d > vtoA ? "suave" : ""}"><td>${fecha(x.d)}</td><td class="n">${x.a ? num(x.a) : "—"}</td><td class="n">${x.b ? num(x.b) : "—"}</td>
+      <td class="n ${x.b - x.a > 0 ? "pos" : x.b - x.a < 0 ? "neg" : ""}">${num(x.b - x.a)}</td><td class="n">${num(acA)}</td><td class="n">${num(acB)}</td></tr>`;
+  }).join("");
+  const hastaA = (fl, vn) => vn / 100 * fl.filter(f => f[0] <= r.T).reduce((s, f) => s + f[1] + f[2] + (f[3] || 0), 0);
+  const dif = pasar - quedarse;
+  return `
+      <div class="datos">
+        ${dato(`Vendo ${esc(A.tk)}`, num(vnA, 0) + " VN")}${dato("Neto de la venta", num(neto))}
+        ${dato(`Compro ${esc(B.tk)}`, num(vnB, 0) + " VN")}${dato("Costo con comisión", num(costo))}${dato("Sobra en caja", num(sobra))}
+        ${dato(`Al ${fecha(vtoA)}`, `<span class="${dif > 0 ? "pos" : "neg"}">${dif > 0 ? "+" : "−"}${num(Math.abs(dif))}</span>`)}
+      </div>
+      <p class="nota">Reglas: ${esc(A.tk)} ${textoRegla(LA)} · ${esc(B.tk)} ${textoRegla(LB)} (mínimo: ${esc(LB.fuente)}; incremento: ${esc(LB.sinDato ? "sin dato" : LB.incFuente)}). Al ${fecha(vtoA)}: quedarse vale ${num(quedarse)}, pasar ${num(pasar)} (cupones y caja al ${pct(reinv)}${restoB.length ? `, ${esc(B.tk)} a su TIR de hoy` : ""}).</p>
+      <details open><summary>Cashflows en dólares, fecha por fecha</summary>
+      <div class="tabla-caja"><table><thead><tr><th>Cobro</th><th class="n">${esc(A.tk)}</th><th class="n">${esc(B.tk)}</th><th class="n">${esc(B.tk)} − ${esc(A.tk)}</th><th class="n">Acum. ${esc(A.tk)}</th><th class="n">Acum. ${esc(B.tk)} + caja</th></tr></thead>
+      <tbody><tr><td>${fecha(E.liq)} (pase)</td><td class="n">—</td><td class="n">—</td><td class="n">${num(sobra)}</td><td class="n">—</td><td class="n">${num(sobra)}</td></tr>${tb}</tbody>
+      <tfoot><tr><td><b>Hasta ${fecha(vtoA)}</b></td><td class="n"><b>${num(hastaA(fA, vnA))}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra)}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra - hastaA(fA, vnA))}</b></td><td></td><td></td></tr></tfoot></table></div>
+      <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra.</p></details>`;
 }
 
 // ---------- emisores ----------

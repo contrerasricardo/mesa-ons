@@ -61,9 +61,16 @@ export function alinear(flujos, liqCierre, liq) {
 //   el vencimiento de A se reinvierten a `reinv`, y lo que le queda a B se vende ese día a la TIR de salida.
 // Si B vence después de A: TIR de salida de B que iguala las dos riquezas (quiebre) y cuántos pb puede ensancharse.
 // Si B vence antes: no hay salida; se reinvierte todo a `reinv` y el quiebre es la tasa de reinversión que iguala.
+// Valor al día T de los flujos cobrados hasta T, reinvertidos a r.
+export const valorAl = (fl, T, r) => fl.filter(f => f[0] <= T).reduce((s, f) => s + total(f) * (1 + r) ** ((T - f[0]) / 365), 0);
+
+// Regla de negociación de un bono: lámina mínima y de ahí en más de a `inc` (p. ej. 1.000 y luego de a 1; 10.000 en 10.000).
+export const redondearVN = (x, { min, inc }) => x + 1e-9 < min ? 0 : min + Math.floor((x - min) / inc + 1e-9) * inc;
+export const vnValido = (x, { min, inc }) => x + 1e-9 >= min && Math.abs((x - min) / inc - Math.round((x - min) / inc)) < 1e-9;
+
 export function pase({ fA, pA, fB, pB, comVenta, comCompra, reinv }) {
   const T = Math.max(...fA.map(f => f[0]));
-  const fv = (fl, r) => fl.filter(f => f[0] <= T).reduce((s, f) => s + total(f) * (1 + r) ** ((T - f[0]) / 365), 0);
+  const fv = (fl, r) => valorAl(fl, T, r);
   const nB = (pA * (1 - comVenta)) / (pB * (1 + comCompra));
   const restoB = fB.filter(f => f[0] > T).map(([d, c, r, a]) => [d - T, c, r, a]);
   const quedarse = r => fv(fA, r);
