@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106a";
-import { crearMotor } from "./pesos.js?v=20261106a";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106b";
+import { crearMotor } from "./pesos.js?v=20261106b";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -100,7 +100,10 @@ async function pedirVivo1() {
   const d912 = ["arg_corp", "arg_bonds", "arg_notes"], byma = ["negociable-obligations", "public-bonds"];
   $("#btn-vivo").disabled = true;
   const [a, b, ci] = await Promise.all([
-    Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => x.json()))),
+    Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => {
+      if (f === "arg_corp") E.lmD912 = Date.parse(x.headers.get("last-modified")) || null;
+      return x.json();
+    }))),
     Promise.allSettled(byma.map(p => pedirBYMA(p))),
     pedirBYMA("public-bonds", true).catch(() => null)]);
   $("#btn-vivo").disabled = false;
@@ -944,19 +947,28 @@ function pintar(foco) {
 document.querySelectorAll(".pestanas button").forEach(b => b.onclick = () => ir(b.dataset.p));
 $("#btn-vivo").onclick = pedirVivo;
 window.addEventListener("hashchange", () => ir(location.hash.slice(1)));
-// puntas solas: cada 20 s (el ritmo de data912) en horario de mercado (10:30 a 17, lun a vie, hora de Buenos Aires) y con la página a la vista
-const AUTO_MS = 20e3;
+// puntas solas en horario de mercado (10:30 a 17, lun a vie, hora de Buenos Aires) y con la página a la vista.
+// data912 sale por una caché de 30 s: se pide 1 s después de que vence la copia actual (last-modified + 30 s)
+const AUTO_MS = 20e3, CACHE_D912 = 30e3;
 function enHorario() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Argentina/Buenos_Aires", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" })
     .formatToParts(new Date()).map(x => [x.type, x.value]));
   const m = +p.hour * 60 + +p.minute;
   return !["Sat", "Sun"].includes(p.weekday) && m >= 630 && m <= 1020;
 }
-setInterval(() => { if (!document.hidden && enHorario()) pedirVivo(); }, AUTO_MS);
+function proximaEspera() {
+  if (!E.lmD912) return AUTO_MS;
+  const t = E.lmD912 + CACHE_D912 + 1e3 - Date.now();
+  return t < 2e3 || t > CACHE_D912 + 5e3 ? AUTO_MS : t;
+}
+async function ciclo() {
+  if (!document.hidden && enHorario()) await pedirVivo();
+  setTimeout(ciclo, proximaEspera());
+}
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !E.horaVivo) return;
   if (Date.now() - E.horaVivo > (enHorario() ? AUTO_MS : 5 * 60e3)) pedirVivo();
 });
 
-cargar().then(() => { estado(); ir(location.hash.slice(1) || "dolares"); pedirVivo(); })
+cargar().then(async () => { estado(); ir(location.hash.slice(1) || "dolares"); await pedirVivo(); setTimeout(ciclo, proximaEspera()); })
   .catch(e => { $("#estado").innerHTML = `<span class="error">No pude leer los datos (${esc(e.message)})</span>`; });
