@@ -1,9 +1,9 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105d";
-import { descifrar } from "./descifrar.js?v=20261105d";
-import { crearMotor } from "./pesos.js?v=20261105d";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105e";
+import { descifrar } from "./descifrar.js?v=20261105e";
+import { crearMotor } from "./pesos.js?v=20261105e";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -908,13 +908,31 @@ async function abrirEmisores(clave, recordar) {
   } catch { if (recordar === true) guardado.escribir("clave", null); return false; }
 }
 
+// banderas internas del modelo: van como nota, no como fila
+const BANDERAS = { estimado: "spread estimado", "TIR lejana": "TIR de un bono lejano", "TIR equivalente": "TIR de un bono equivalente", "Spread externo": "spread de fuente externa" };
+const EN_PCT = /^(PD|TIR|Spread soberano|Dif\.|P iliquidez|P sin mercado)/;
+function valorFicha(k, v) {
+  if (v == null || v === "") return `<span class="suave">n/d</span>`;
+  if (typeof v !== "number") return esc(v);
+  if (EN_PCT.test(k)) return k.startsWith("Dif.") ? `${pb(v * 1e4)} pb` : pct(v);
+  if (k === "Spread") return `${pb(v)} pb`;
+  if (k.includes("/") || k === "Cobertura ONs") return `${num(v, 2)}x`;
+  return num(v, Math.abs(v) < 10 ? 2 : 1);
+}
 function fichaEmisor(x) {
   const dlg = $("#ficha");
-  const fila = o => Object.entries(o).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${typeof v === "number" ? num(v, Math.abs(v) < 10 ? 3 : 1) : esc(v)}</td></tr>`).join("");
-  dlg.innerHTML = `<div class="dlg"><div class="cab-ficha"><div><h3>${esc(x.em)}</h3><div class="suave">${esc(x.sector)}</div></div><button class="btn chico" data-cerrar type="button">Cerrar</button></div>
-    <div class="datos">${Object.entries(x.cualidades).map(([k, v]) => dato(esc(k), num(v, 0))).join("")}</div>
-    <div class="tabla-caja"><table><thead><tr><th>Pricing</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.pricing)}</tbody></table></div>
-    <div class="tabla-caja"><table><thead><tr><th>Métrica</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.metricas)}</tbody></table></div></div>`;
+  const fila = o => Object.entries(o).filter(([k]) => !(k in BANDERAS)).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${valorFicha(k, v)}</td></tr>`).join("");
+  const banderas = Object.keys(BANDERAS).filter(k => x.metricas[k] === true).map(k => BANDERAS[k]);
+  const sinEbitda = x.metricas["EBITDA LTM"] == null;
+  const aviso = sinEbitda ? `<p class="nota aviso">Sin EBITDA ${x.sector === "Financieras" ? "(financiera)" : ""}: cobertura, caja después de invertir, liquidez, promedio y TIR exigida no se calculan con este modelo.</p>` : "";
+  const pricing = Object.keys(x.pricing).length ? `<div class="tabla-caja"><table><thead><tr><th>Pricing</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.pricing)}</tbody></table></div>`
+    : `<p class="nota">Sin pricing: el modelo necesita EBITDA para valuar los activos. TIR de mercado ${valorFicha("TIR", x.metricas["TIR mercado"])}.</p>`;
+  dlg.innerHTML = `<div class="dlg"><div class="cab-ficha"><div><h3>${esc(x.em)}</h3><div class="suave">${esc(x.sector)} · corte ${esc(x.corte || "")}</div></div><button class="btn chico" data-cerrar type="button">Cerrar</button></div>
+    ${aviso}
+    <div class="datos">${Object.entries(x.cualidades).map(([k, v]) => dato(esc(k), v == null ? "n/d" : num(v, 0))).join("")}</div>
+    ${pricing}
+    <div class="tabla-caja"><table><thead><tr><th>Métrica</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.metricas)}</tbody></table></div>
+    ${banderas.length ? `<p class="nota">Ojo: ${banderas.join(" · ")}.</p>` : ""}</div>`;
   dlg.querySelector("[data-cerrar]").onclick = () => dlg.close();
   if (!dlg.open) dlg.showModal();
 }
