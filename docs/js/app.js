@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105f";
-import { crearMotor } from "./pesos.js?v=20261105f";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106a";
+import { crearMotor } from "./pesos.js?v=20261106a";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -90,7 +90,13 @@ function pedirBYMA(panel, ci = false) {
     .then(x => x.json()).then(d => (d.data || d).map(r => ({ symbol: r.symbol, px_bid: r.bidPrice, px_ask: r.offerPrice, q_bid: r.quantityBid,
       q_ask: r.quantityOffer, c: r.trade, v: r.volume, fuente: "BYMA" })));
 }
+let pidiendo = false;
 async function pedirVivo() {
+  if (pidiendo) return;
+  pidiendo = true;
+  try { await pedirVivo1(); } finally { pidiendo = false; }
+}
+async function pedirVivo1() {
   const d912 = ["arg_corp", "arg_bonds", "arg_notes"], byma = ["negociable-obligations", "public-bonds"];
   $("#btn-vivo").disabled = true;
   const [a, b, ci] = await Promise.all([
@@ -111,13 +117,16 @@ async function pedirVivo() {
     E.errorVivo = faltan.length ? `parcial: sin ${faltan.join(" ni ")}` : null;
     E.liq = liquidacionHoy();
   } else E.errorVivo = "sin conexión con data912 ni BYMA";
-  estado(); pintar();
+  estado();
+  // si estás escribiendo en un campo, repintar sin sacarte de él
+  const foco = document.activeElement;
+  pintar(foco?.name && (foco.tagName === "TEXTAREA" || ["text", "search"].includes(foco.type)) && foco.closest(`#p-${actual}`) ? foco : undefined);
 }
 
 function estado() {
   const m = E.meta;
   let s = m ? `Cierre ${fecha(m.cierre)}` : "";
-  if (E.horaVivo) s += ` · <span class="vivo">puntas ${E.horaVivo.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span> · liq. ${fecha(E.liq).slice(0, 5)}`;
+  if (E.horaVivo) s += ` · <span class="vivo">${enHorario() ? "● " : ""}puntas ${E.horaVivo.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span> · liq. ${fecha(E.liq).slice(0, 5)}`;
   if (E.errorVivo) s += ` · <span class="error">${esc(E.errorVivo)}</span>`;
   $("#estado").innerHTML = s;
 }
@@ -935,8 +944,18 @@ function pintar(foco) {
 document.querySelectorAll(".pestanas button").forEach(b => b.onclick = () => ir(b.dataset.p));
 $("#btn-vivo").onclick = pedirVivo;
 window.addEventListener("hashchange", () => ir(location.hash.slice(1)));
+// puntas solas: cada 20 s (el ritmo de data912) en horario de mercado (10:30 a 17, lun a vie, hora de Buenos Aires) y con la página a la vista
+const AUTO_MS = 20e3;
+function enHorario() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Argentina/Buenos_Aires", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" })
+    .formatToParts(new Date()).map(x => [x.type, x.value]));
+  const m = +p.hour * 60 + +p.minute;
+  return !["Sat", "Sun"].includes(p.weekday) && m >= 630 && m <= 1020;
+}
+setInterval(() => { if (!document.hidden && enHorario()) pedirVivo(); }, AUTO_MS);
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && E.horaVivo && Date.now() - E.horaVivo > 5 * 60e3) pedirVivo();
+  if (document.hidden || !E.horaVivo) return;
+  if (Date.now() - E.horaVivo > (enHorario() ? AUTO_MS : 5 * 60e3)) pedirVivo();
 });
 
 cargar().then(() => { estado(); ir(location.hash.slice(1) || "dolares"); pedirVivo(); })
