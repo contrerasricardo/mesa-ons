@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106d";
-import { crearMotor } from "./pesos.js?v=20261106d";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106e";
+import { crearMotor } from "./pesos.js?v=20261106e";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -668,7 +668,7 @@ function resultadoPrimaria() {
 }
 
 // ---------- pase ----------
-E.pase = { vendo: "", compro: "", linea: "D", pv: "", pc: "", cv: "0.5", cc: "0.5", reinv: "", vn: "10000", ...guardado.leer("pase", {}) };
+E.pase = { vendo: "", compro: "", linea: "D", pv: "", pc: "", cv: "0.5", cc: "0.5", reinv: "", vn: "10000", colchon: "50", rtipo: "", rcobra: "", rancho: "2", ...guardado.leer("pase", {}) };
 function pPase() {
   const P = E.pase;
   const universo = [...E.ons, ...E.soberanos].filter(b => b.calculable);
@@ -700,6 +700,7 @@ function pPase() {
       </div>
     </div>
     <div id="res-pase"></div>
+    <div id="rot-pase"></div>
     <h3 class="sub">Pase de monedas</h3>
     <div id="pase-mon"></div>`;
   el.querySelector("[name=linea]").value = P.linea;
@@ -707,10 +708,11 @@ function pPase() {
     if (c.name === "lamB" || c.name === "incB") guardarRegla(B, el.querySelector("[name=lamB]").value.trim(), el.querySelector("[name=incB]").value.trim());
     else P[c.name] = c.value.trim();
     if (c.name === "vendo") P.pv = ""; if (c.name === "compro") P.pc = "";
-    guardado.escribir("pase", { vendo: P.vendo, compro: P.compro, linea: P.linea, cv: P.cv, cc: P.cc, reinv: P.reinv, vn: P.vn });
+    guardado.escribir("pase", { vendo: P.vendo, compro: P.compro, linea: P.linea, cv: P.cv, cc: P.cc, reinv: P.reinv, vn: P.vn, colchon: P.colchon, rtipo: P.rtipo, rcobra: P.rcobra, rancho: P.rancho });
     pPase();
   }));
   $("#res-pase").innerHTML = resultadoPase(A, B, vA, vB);
+  rotaciones(A, vA, universo);
   paseMonedas();
 }
 
@@ -745,13 +747,76 @@ function resultadoPase(A, B, vA, vB) {
           ? `${esc(B.tk)} vence antes que ${esc(A.tk)}: reinvirtiendo todo al ${pct(reinv)} hasta el ${fecha(vtoA)}, el pase <b class="${r.mejora > 0 ? "pos" : "neg"}">${r.mejora > 0 ? "suma" : "resta"} ${pct(Math.abs(r.mejora))}</b> neto de comisiones.
              ${r.reinvQuiebre != null ? `Tasa de reinversión que iguala las dos opciones: <b>${pct(r.reinvQuiebre)}</b>.` : ""}`
           : `Al vencimiento de ${esc(A.tk)} (${fecha(vtoA)}), si ${esc(B.tk)} mantiene su TIR el pase <b class="${r.mejora > 0 ? "pos" : "neg"}">${r.mejora > 0 ? "suma" : "resta"} ${pct(Math.abs(r.mejora))}</b> neto de comisiones.
-             TIR de quiebre de ${esc(B.tk)} ese día: <b>${pct(r.tirQuiebre)}</b> → <b class="${bueno ? "pos" : "neg"}">${bueno ? "aguanta" : "ya pierde con"} ${pb(Math.abs(r.ensanchePb))} pb ${bueno ? "de ensanchamiento" : "de compresión necesaria"}</b>.`}
+             ${r.tirQuiebre == null ? (r.mejora > 0 ? `<b class="pos">Aguanta cualquier ensanchamiento</b>: casi todo el flujo de ${esc(B.tk)} cae antes de esa fecha.` : "")
+               : `TIR de quiebre de ${esc(B.tk)} ese día: <b>${pct(r.tirQuiebre)}</b> → <b class="${bueno ? "pos" : "neg"}">${bueno ? "aguanta" : "ya pierde con"} ${pb(Math.abs(r.ensanchePb))} pb ${bueno ? "de ensanchamiento" : "de compresión necesaria"}</b>.`}`}
       </div>
       ${nom}
       <p class="nota">Flujos exactos de los dos bonos, cupones reinvertidos al ${pct(reinv)}. Regla rápida: (TIR compra − TIR venta) × vida de ${esc(A.tk)} (${num(r.T / 365, 1)} años) − comisiones = ${pct(rapida)}.</p>
       ${avisos.map(a => `<p class="nota aviso">${esc(a)}</p>`).join("")}
       <p class="nota">Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>
     </div>`;
+}
+
+// Rotaciones: el bono que vendo contra todos los que tienen punta vendedora en la línea, con el mismo cálculo del pase
+// (flujos exactos, comisiones, reinversión). Buena = suma y aguanta el colchón; fina = suma pero con poco margen.
+function rotaciones(A, vA, universo) {
+  const P = E.pase, cont = $("#rot-pase");
+  const pA = A && (dec(P.pv) ?? vA?.bid);
+  if (!A || !pA) { cont.innerHTML = ""; return; }
+  const fA = alinear(A.flujos, A.liq, E.liq), yA = tir(fA, pA);
+  if (yA == null) { cont.innerHTML = ""; return; }
+  const cv = (dec(P.cv) ?? 0) / 100, cc = (dec(P.cc) ?? 0) / 100, reinv = dec(P.reinv) != null ? dec(P.reinv) / 100 : yA;
+  const umbral = dec(P.colchon) ?? 0, anchoMax = (dec(P.rancho) ?? 100) / 100;
+  const filas = [];
+  let raras = 0;
+  for (const B of universo) {
+    if (B.tk === A.tk || (P.rtipo && B.tipo !== P.rtipo) || (P.rcobra && B.cobra !== P.rcobra)) continue;
+    const v = enVivo(B, P.linea);
+    if (!v?.ask || v.tAsk == null) continue;
+    // puntas sin compradora, muy abiertas o TIR absurda: precio que no sirve para rotar
+    if (!v.bid || v.ancho > anchoMax || v.tAsk > 0.3) { raras++; continue; }
+    const r = pase({ fA, pA, fB: v.flujos, pB: v.ask, comVenta: cv, comCompra: cc, reinv });
+    // colchón: pb que puede ensancharse B (o bajar la reinversión, si B vence antes) antes de que el pase pierda
+    // sin quiebre y sumando: gana con cualquier ensanche (casi todo el flujo cae antes del vencimiento del vendido)
+    let colchon = r.bVenceAntes ? (r.reinvQuiebre != null ? (reinv - r.reinvQuiebre) * 1e4 : null) : r.ensanchePb ?? null;
+    if (colchon == null && r.mejora > 0) colchon = Infinity;
+    const ver = !(r.mejora > 0) ? "pierde" : colchon != null && colchon >= umbral ? "buena" : "fina";
+    filas.push({ B, v, r, colchon, ver, dif: (v.tAsk - yA) * 1e4 });
+  }
+  const n = { buena: 0, fina: 0, pierde: 0 }; filas.forEach(f => n[f.ver]++);
+  const vista = filas.filter(f => P.rver === "todas" || f.ver !== "pierde");
+  if (!E.orden.rotaciones) E.orden.rotaciones = { k: "mejora", asc: false };
+  const ETQ = { buena: '<span class="pos tk">Buena</span>', fina: '<span class="aviso tk">Fina</span>', pierde: '<span class="neg">Pierde</span>' };
+  const cols = [
+    { k: "tk", t: "Compro", f: x => `<span class="tk">${esc(x.B.tk)}</span>`, v: x => x.B.tk },
+    { k: "emisor", t: "Emisor", cls: "emisor ocultar-movil", f: x => esc(x.B.emisor), v: x => x.B.emisor },
+    { k: "vto", t: "Vence", f: x => fecha(x.B.vencimiento), v: x => x.B.vencimiento },
+    { k: "cobra", t: "Cobra", cls: "ocultar-movil", f: x => esc(x.B.cobra), v: x => x.B.cobra },
+    { k: "tir", t: "TIR", n: 1, f: x => pct(x.v.tAsk), v: x => x.v.tAsk },
+    { k: "dif", t: "Dif.", n: 1, f: x => pb(x.dif) + " pb", v: x => x.dif, titulo: `TIR de compra − TIR de venta de ${A.tk}` },
+    { k: "mejora", t: "Suma neto", n: 1, f: x => `<span class="${x.r.mejora > 0 ? "pos" : "neg"}">${pct(x.r.mejora)}</span>`, v: x => x.r.mejora, titulo: `Al vencimiento de ${A.tk}, neto de comisiones, si el bono comprado mantiene su TIR` },
+    { k: "colchon", t: "Colchón", n: 1, f: x => x.colchon == null ? "—" : x.colchon > 2000 ? "sin quiebre" : `${pb(x.colchon)} pb${x.r.bVenceAntes ? ' <small class="cant">reinv.</small>' : ""}`, v: x => x.colchon, titulo: "Cuánto puede ensancharse el bono comprado (o bajar la reinversión, si vence antes) sin que el pase pierda" },
+    { k: "ver", t: "Rotación", f: x => ETQ[x.ver], v: x => ({ buena: 2, fina: 1, pierde: 0 })[x.ver] },
+    { k: "ancho", t: "Puntas", n: 1, cls: "ocultar-movil", f: x => x.v.ancho == null ? "—" : `<span class="${x.v.ancho > 0.01 ? "aviso" : ""}">${pct(x.v.ancho)}</span>`, v: x => x.v.ancho },
+  ];
+  const tipos = [...new Set(universo.map(b => b.tipo))], cobras = [...new Set(universo.map(b => b.cobra))].filter(Boolean);
+  const op = (vals, sel, nom) => `<option value="">Todos</option>` + vals.map(t => `<option value="${esc(t)}"${t === sel ? " selected" : ""}>${esc(nom(t))}</option>`).join("");
+  cont.innerHTML = `<h3 class="sub">Rotaciones para ${esc(A.tk)}</h3>
+    <div class="filtros">
+      <label class="campo">Colchón para «buena» (pb)<input name="colchon" inputmode="decimal" value="${esc(P.colchon)}"></label>
+      <label class="campo">Puntas máx. %<input name="rancho" inputmode="decimal" value="${esc(P.rancho)}"></label>
+      <label class="campo">Tipo<select name="rtipo">${op(tipos, P.rtipo, t => ({ on: "ONs", sob: "Soberanos" })[t] || t)}</select></label>
+      <label class="campo">Cobra en<select name="rcobra">${op(cobras, P.rcobra, t => t)}</select></label>
+      <label class="chip"><input type="checkbox" name="rver"${P.rver === "todas" ? " checked" : ""}> Ver también las que pierden</label>
+    </div>
+    <p class="nota">Vendo ${esc(A.tk)} a ${num(pA)} (TIR ${pct(yA)}) en la línea ${esc(P.linea)} · comisiones ${pct(cv)} venta + ${pct(cc)} compra · cupones al ${pct(reinv)} · <span class="pos">${n.buena} buenas</span>, <span class="aviso">${n.fina} finas</span>, ${n.pierde} pierden${raras ? ` · ${raras} sin compradora, con puntas de más del ${pct(anchoMax, 1)} o TIR de más de 30%, afuera` : ""}. Toca una fila para verla arriba con los nominales.</p>`;
+  cont.append(tabla("rotaciones", vista, cols, { alClick: x => { P.compro = x.B.tk; P.pc = ""; guardado.escribir("pase", { ...guardado.leer("pase", {}), compro: P.compro }); pPase(); scrollTo({ top: 0, behavior: "smooth" }); } }));
+  cont.insertAdjacentHTML("beforeend", `<p class="nota">Buena: suma neto de comisiones y aguanta al menos ${num(umbral, 0)} pb en contra. Fina: suma, pero con menos colchón. «Sin quiebre»: gana aunque el bono comprado se ensanche cualquier cosa, porque casi todo su flujo cae antes. La diferencia de TIR también es diferencia de crédito: pasar a otro emisor cambia el riesgo. Con monedas de cobro distintas, el canje entra aparte. Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`);
+  cont.querySelectorAll(".filtros [name]").forEach(c => c.addEventListener("change", () => {
+    P[c.name] = c.type === "checkbox" ? (c.checked ? "todas" : "") : c.value.trim();
+    guardado.escribir("pase", { ...guardado.leer("pase", {}), colchon: P.colchon, rtipo: P.rtipo, rcobra: P.rcobra, rancho: P.rancho });
+    rotaciones(A, vA, universo);
+  }));
 }
 
 // Pase con nominales reales: lo que entra al vender A, el VN de B redondeado a su regla de negociación, lo que sobra en caja
