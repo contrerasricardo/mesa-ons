@@ -50,8 +50,8 @@
  "chamomberg_sin_dato": [],
  "emisores": {
   "corte": "2T26",
-  "generado": "2026-11-04T19:52:15+00:00",
-  "n": 17,
+  "generado": "2026-11-06T00:14:31+00:00",
+  "n": 19,
   "cifrado": "AES-256-GCM"
  }
 }
