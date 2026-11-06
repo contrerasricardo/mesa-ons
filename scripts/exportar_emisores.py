@@ -29,8 +29,37 @@ BAL_3T = ("bal = rc.build_balances_from_master(period=PERIODO)\n",
           "bal = rc.build_balances_from_master(period=PERIODO)\n"
           "_b3 = rc.build_balances_from_master(period=\"3T26\"); _con3 = list(_b3.index[_b3.ebitda_ltm.notna()])\n"
           "bal.loc[_con3] = _b3.loc[_con3].combine_first(bal.loc[_con3])\n")
-PARCHES = {"05_pricing.py": [BAL_3T],
-           "06_comparativo.py": [('d7["x"] = d7["Escalón"]\n', 'd7["x"] = d7["Escalón"].astype(float)\n'), BAL_3T]}
+# IRSA y Cresud cierran ejercicio en junio y no entran al panel del desk: se leen de la hoja «FY26 jun» del Excel
+# (anual = LTM) y se suman en memoria al balance, a la base de Merton (IRS y CRESY cotizan en NY) y al cruce de ONs.
+# Supuestos: sector propio con pesos FSO parejos y alpha soberano por defecto (0,60, renta en pesos de mercado interno).
+FY_JUN = ("bal = rc.build_balances_from_master(period=PERIODO)\n",
+          "bal = rc.build_balances_from_master(period=PERIODO)\n"
+          "import src.merton_kmv as _mk, tir_mercado as _tm, pandas as _pd\n"
+          "_fy = rc.build_balances_from_master(\"/Users/contr/Documents/CEREBRO/Research Corporativos.xlsx\", period=\"FY26 jun\").apply(_pd.to_numeric, errors=\"coerce\")\n"
+          "_fy[\"ebitda_ltm\"] = _fy.ebitda; _fy[\"cfo_ltm\"] = _fy.cfo\n"
+          "_fy[\"sector\"] = _fy.index.map({\"IRSA\": \"Real Estate\", \"CRESY\": \"Agro\"})\n"
+          "bal = _pd.concat([bal[~bal.index.isin(_fy.index)], _fy])\n"
+          "_tm.PATRONES.update({\"IRSA\": [\"INVERSIONES Y REPRESENTACIONES\"], \"CRESY\": [\"CRESUD\"]})\n"
+          "if \"IRSA\" not in _mk.US_LISTED_TICKERS: _mk.US_LISTED_TICKERS.append(\"IRSA\")\n"
+          "_qdb = _mk.load_quant_database\n"
+          "def _qdb_fy(_q=_qdb, _f=_fy):\n"
+          "    b, m = _q()\n"
+          "    extra = _pd.DataFrame({\"Ticker\": _f.index, \"STD\": _f.st_debt.values, \"LTD\": _f.lt_debt.values,\n"
+          "                           \"Total_Liabilities\": _f.total_liabilities.values, \"Sector\": _f.sector.values})\n"
+          "    return (_pd.concat([b[~b.Ticker.isin(_f.index)], extra], ignore_index=True),\n"
+          "            _pd.concat([m[m.Ticker != \"IRSA\"], m[m.Ticker == \"IRS\"].assign(Ticker=\"IRSA\")], ignore_index=True))\n"
+          "_mk.load_quant_database = _qdb_fy\n")
+# en el 06, la base LTM de los ratios y la liquidez: FY26 jun es el LTM (intereses en financiación: FCO antes de intereses)
+LTM_JUN = ("bases, meta = L.construir_bases()\n",
+           "bases, meta = L.construir_bases()\n"
+           "import pandas as _pd\n"
+           "_fl = rc.build_balances_from_master(\"/Users/contr/Documents/CEREBRO/Research Corporativos.xlsx\", period=\"FY26 jun\").apply(_pd.to_numeric, errors=\"coerce\")\n"
+           "_fl[\"cfo_ai\"] = _fl.cfo - _fl.interest_paid\n"
+           "bases[\"LTM\"] = _pd.concat([bases[\"LTM\"][~bases[\"LTM\"].index.isin(_fl.index)], _fl.reindex(columns=bases[\"LTM\"].columns)])\n"
+           "meta[\"cortes\"].update({em: \"FY26 jun\" for em in _fl.index})\n"
+           "E.NOMBRE.update({\"CRESY\": \"Cresud\"})\n")
+PARCHES = {"05_pricing.py": [BAL_3T, FY_JUN],
+           "06_comparativo.py": [('d7["x"] = d7["Escalón"]\n', 'd7["x"] = d7["Escalón"].astype(float)\n'), LTM_JUN, BAL_3T, FY_JUN]}
 
 
 def correr(nombre):
@@ -66,6 +95,7 @@ def armar():
     cualidades = [*c["CUALIDADES"], "Capacidad de pago", "Promedio"]
     pricing = ["PD_T", "PD_1y", "TIR Merton", "Spread soberano", "TIR exigida", "TIR mercado", "Dif. mercado - exigida"]
     con3 = set(p["_con3"]) & set(c["_con3"])
+    jun = set(c["_fy"].index)
     emisores = {}
     for em in datos.index:
         fila = datos.loc[em]
@@ -77,9 +107,9 @@ def armar():
             "puestos": ({"min": limpio(rangos[em][0]), "max": limpio(rangos[em][1]),
                          "base": limpio(c["puestos"].loc[em, "base"])} if em in rangos else None),
             "inestable": em in c["inestables"],
-            "corte": "3T26" if em in con3 else str(c["PERIODO"]),
+            "corte": "FY26 jun" if em in jun else "3T26" if em in con3 else str(c["PERIODO"]),
         }
-    return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
+    return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' + (f' · FY26 jun: {", ".join(sorted(jun))}' if jun else '') if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
             "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "emisores": emisores, "lectura_html": c["_html_lectura"]}
 
