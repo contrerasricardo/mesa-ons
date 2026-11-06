@@ -30,7 +30,13 @@ RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "docs/data"
 SRC = Path(os.environ.get("MESA_SRC", "/Users/contr/myenv/src"))
 ITERACIONES = 600_000
-PARCHES = {"06_comparativo.py": [('d7["x"] = d7["Escalón"]\n', 'd7["x"] = d7["Escalón"].astype(float)\n')]}
+# los emisores que ya publicaron 3T26 usan ese balance (los demás siguen en el corte del notebook)
+BAL_3T = ("bal = rc.build_balances_from_master(period=PERIODO)\n",
+          "bal = rc.build_balances_from_master(period=PERIODO)\n"
+          "_b3 = rc.build_balances_from_master(period=\"3T26\"); _con3 = list(_b3.index[_b3.ebitda_ltm.notna()])\n"
+          "bal.loc[_con3] = _b3.loc[_con3].combine_first(bal.loc[_con3])\n")
+PARCHES = {"05_pricing.py": [BAL_3T],
+           "06_comparativo.py": [('d7["x"] = d7["Escalón"]\n', 'd7["x"] = d7["Escalón"].astype(float)\n'), BAL_3T]}
 
 
 def correr(nombre):
@@ -65,6 +71,7 @@ def armar():
     datos, uni, rangos = c["datos"], p["uni"], c["rangos"]
     cualidades = [*c["CUALIDADES"], "Capacidad de pago", "Promedio"]
     pricing = ["PD_T", "PD_1y", "TIR Merton", "Spread soberano", "TIR exigida", "TIR mercado", "Dif. mercado - exigida"]
+    con3 = set(p["_con3"]) & set(c["_con3"])
     emisores = {}
     for em in datos.index:
         fila = datos.loc[em]
@@ -76,8 +83,9 @@ def armar():
             "puestos": ({"min": limpio(rangos[em][0]), "max": limpio(rangos[em][1]),
                          "base": limpio(c["puestos"].loc[em, "base"])} if em in rangos else None),
             "inestable": em in c["inestables"],
+            "corte": "3T26" if em in con3 else str(c["PERIODO"]),
         }
-    return {"corte": str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
+    return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
             "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "emisores": emisores, "lectura_html": c["_html_lectura"]}
 
@@ -151,7 +159,7 @@ def main():
     (SALIDA / "emisores.json").write_text(json.dumps(sobre))
     ruta_meta = SALIDA / "meta.json"
     meta = json.loads(ruta_meta.read_text()) if ruta_meta.exists() else {}
-    meta["emisores"] = {"corte": datos["corte"], "generado": datos["generado"], "n": len(datos["emisores"]), "cifrado": sobre["alg"]}
+    meta["emisores"] = {"corte": datos["corte"].split(" · ")[0] + (" / 3T26" if " · " in datos["corte"] else ""), "generado": datos["generado"], "n": len(datos["emisores"]), "cifrado": sobre["alg"]}
     ruta_meta.write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     print(f"emisores.json: {len(datos['emisores'])} emisores, corte {datos['corte']}, cifrado y verificado")
     if a.publicar:
