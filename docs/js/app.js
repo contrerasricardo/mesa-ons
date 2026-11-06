@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106b";
-import { crearMotor } from "./pesos.js?v=20261106b";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106c";
+import { crearMotor } from "./pesos.js?v=20261106c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -818,6 +818,7 @@ function paseMonedas() {
       <div class="tarjeta"><h4>Quiero</h4>
         <label class="campo">Moneda<select name="a">${opc(M.a)}</select></label>
         <label class="campo">Vendo ${esc(M.bono + MON[M.a].lin)} a, c/100 VN (punta compradora${qV?.px_bid > 0 ? ": " + num(qV.px_bid, M.a === "ARS" ? 2 : 3) : ""})<input name="pv" inputmode="decimal" value="${esc(M.pv)}" placeholder="${qV?.px_bid > 0 ? qV.px_bid : ""}"></label>
+        <label class="campo">Quiero recibir en ${MON[M.a].sim} (opcional: cuánto necesito)<input name="quiero" inputmode="decimal" value="${esc(M.quiero ?? "")}" placeholder="vacío = uso normal"></label>
       </div>
       <div class="tarjeta"><h4>Supuestos</h4>
         <div class="fila"><label class="campo">Bono<select name="bono">${["AL30", "GD30"].map(b => `<option${b === M.bono ? " selected" : ""}>${b}</option>`).join("")}</select></label>
@@ -842,9 +843,11 @@ function resultadoMonedas(qC, qV) {
   const fuente = M.plazo === "CI" ? "BYMA, contado inmediato, 20 min de demora" : "24 hs, data912 o BYMA";
   if (!pc || !pv) return `<p class="nota aviso">Falta precio: ${!pc ? tkC + " sin punta vendedora" : ""} ${!pv ? tkV + " sin punta compradora" : ""} en ${M.plazo === "CI" ? "CI" : "24 hs"} (${fuente}). Actualiza las puntas o escríbelo a mano.</p>`;
   const monto = dec(String(M.monto).replace(/\./g, "")), cc = (dec(M.cc) ?? 0) / 100, cv = (dec(M.cv) ?? 0) / 100;
-  if (!(monto > 0)) return `<p class="nota">Escribe el monto que tienes.</p>`;
-  const vn = redondearVN(monto / (pc / 100 * (1 + cc)), { min: 1, inc: 1 });
-  if (!vn) return `<p class="nota aviso">Con ${de.sim} ${num(monto)} no alcanza para 1 VN de ${tkC} (${num(pc / 100 * (1 + cc), 3)}).</p>`;
+  // modo inverso: cuánto de lo que tengo necesito para recibir un monto neto, con comisiones y VN de a 1
+  const quiero = dec(String(M.quiero ?? "").replace(/\./g, "")), inverso = quiero > 0;
+  if (!inverso && !(monto > 0)) return `<p class="nota">Escribe el monto que tienes.</p>`;
+  const vn = inverso ? Math.ceil(quiero / (pv / 100 * (1 - cv)) - 1e-9) : redondearVN(monto / (pc / 100 * (1 + cc)), { min: 1, inc: 1 });
+  if (!inverso && !vn) return `<p class="nota aviso">Con ${de.sim} ${num(monto)} no alcanza para 1 VN de ${tkC} (${num(pc / 100 * (1 + cc), 3)}).</p>`;
   const costo = vn * pc / 100 * (1 + cc), sobra = monto - costo, recibo = vn * pv / 100 * (1 - cv), bruto = vn * pv / 100;
   const tasa = recibo / costo, tasaSin = pv / pc;
   // cotización legible: pesos por dólar si hay pesos de por medio; si no, el canje (dólares MEP por cada cable − 1)
@@ -855,12 +858,13 @@ function resultadoMonedas(qC, qV) {
   const cot = ars ? dato(`$ por US$ ${M.a === "ARS" ? M.de : M.a}`, num(tc(tasa), 2)) + dato("Sin comisión", num(tc(tasaSin), 2))
     : dato("Canje", pct(cj(tasa))) + dato("Canje sin comisión", pct(cj(tasaSin)));
   return `
-      <div class="recibo">Recibes <b class="pos">${num(recibo, 2)} ${a.sim}</b> <span class="suave">netos, por ${num(monto, 2)} ${de.sim} · vendiendo ${num(vn, 0)} VN de ${esc(tkV)}</span></div>
+      ${inverso ? `<div class="recibo">Necesitas <b class="pos">${num(costo, 2)} ${de.sim}</b> <span class="suave">para recibir ${num(quiero, 2)} ${a.sim} netos · ${num(vn, 0)} VN de ${esc(tkV)}; recibes ${num(recibo, 2)} (${num(recibo - quiero, 2)} de más por redondear a 1 VN)</span></div>`
+        : `<div class="recibo">Recibes <b class="pos">${num(recibo, 2)} ${a.sim}</b> <span class="suave">netos, por ${num(monto, 2)} ${de.sim} · vendiendo ${num(vn, 0)} VN de ${esc(tkV)}</span></div>`}
       <div class="datos mon">
         ${dato(`1 ${de.sim} =`, en(tasa, a, M.a === "ARS" ? 2 : M.de === "ARS" ? 6 : 4))}${dato(`1 ${a.sim} =`, en(1 / tasa, de, M.de === "ARS" ? 2 : M.a === "ARS" ? 6 : 4))}${cot}
       </div>
       <div class="datos mon">
-        ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} <small class="cant">VN a ${num(pc / 100, M.de === "ARS" ? 2 : 4)}</small>`)}${dato("Pago", en(costo, de))}${dato("Sobra", en(sobra, de))}
+        ${dato(`Compro ${esc(tkC)}`, `${num(vn, 0)} <small class="cant">VN a ${num(pc / 100, M.de === "ARS" ? 2 : 4)}</small>`)}${dato("Pago", en(costo, de))}${!(monto > 0) ? "" : sobra >= 0 ? dato("Sobra", en(sobra, de)) : dato(`Te falta (tienes ${num(monto, 2)})`, `<span class="neg">${en(-sobra, de)}</span>`)}
         ${dato("Comisiones", en(bruto * (cc + cv), a))}
       </div>
       <p class="nota">${esc(tkC)} a ${num(pc, M.de === "ARS" ? 2 : 3)} + ${pct(cc)} · ${esc(tkV)} a ${num(pv, M.a === "ARS" ? 2 : 3)} − ${pct(cv)} · precios por 100 VN, de a 1 VN · pago y recibo con comisión${ars ? "" : "; canje = MEP por cada cable − 1"} · ${esc(fuente)}${dec(M.pc) != null || dec(M.pv) != null ? " (con precio a mano)" : ""}.</p>
