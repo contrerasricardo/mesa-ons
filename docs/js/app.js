@@ -1,9 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105e";
-import { descifrar } from "./descifrar.js?v=20261105e";
-import { crearMotor } from "./pesos.js?v=20261105e";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261105f";
+import { crearMotor } from "./pesos.js?v=20261105f";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -861,22 +860,10 @@ const CORTO = { "Solidez de balance": "Balance", "Cobertura de intereses": "Cobe
 async function pEmisores() {
   const el = $("#p-emisores");
   if (!E.emisores) {
-    const clave = guardado.leer("clave", null);
-    if (clave && await abrirEmisores(clave, true)) return pEmisores();
-    el.innerHTML = `<form class="tarjeta candado" id="f-clave">
-      <h4>Emisores · corte ${esc(E.meta?.emisores?.corte || "")}</h4>
-      <p class="nota">El análisis de emisores está cifrado. Escribe la contraseña de la página.</p>
-      <input type="password" name="clave" autocomplete="current-password" required class="campo" style="padding:8px 10px;border:1px solid var(--linea);border-radius:8px;background:var(--fondo)">
-      <label class="chip"><input type="checkbox" name="recordar" checked> Recordar en este dispositivo</label>
-      <button class="btn primario">Abrir</button><p class="nota" id="msg-clave"></p></form>`;
-    $("#f-clave").onsubmit = async e => {
-      e.preventDefault();
-      const fd = new FormData(e.target);
-      $("#msg-clave").textContent = "Descifrando…";
-      if (await abrirEmisores(fd.get("clave"), fd.get("recordar"))) pEmisores();
-      else $("#msg-clave").textContent = "Contraseña incorrecta.";
-    };
-    return;
+    el.innerHTML = `<p class="nota">Cargando emisores…</p>`;
+    try { E.emisores = await fetch("data/emisores.json", { cache: "no-cache" }).then(r => r.json()); }
+    catch { el.innerHTML = `<p class="nota neg">No se pudo cargar data/emisores.json.</p>`; return; }
+    if (actual !== "emisores") return;
   }
   const d = E.emisores, filas = Object.entries(d.emisores).map(([em, x]) => ({ em, ...x }));
   const nombres = Object.keys(filas[0]?.cualidades || {});
@@ -893,19 +880,9 @@ async function pEmisores() {
   ];
   if (!E.orden.emisores) E.orden.emisores = { k: "q:Promedio", asc: false };
   el.replaceChildren(
-    nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más» · <a href="#" id="olvidar">olvidar contraseña</a>`),
+    nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más»`),
     tabla("emisores", filas, cols, { alClick: fichaEmisor }),
     Object.assign(document.createElement("div"), { className: "lectura", innerHTML: d.lectura_html }));
-  $("#olvidar").onclick = e => { e.preventDefault(); guardado.escribir("clave", null); E.emisores = null; pEmisores(); };
-}
-
-async function abrirEmisores(clave, recordar) {
-  try {
-    const sobre = await fetch("data/emisores.json", { cache: "no-cache" }).then(r => r.json());
-    E.emisores = await descifrar(sobre, clave);
-    if (recordar) guardado.escribir("clave", clave);
-    return true;
-  } catch { if (recordar === true) guardado.escribir("clave", null); return false; }
 }
 
 // banderas internas del modelo: van como nota, no como fila
