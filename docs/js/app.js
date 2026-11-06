@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106e";
-import { crearMotor } from "./pesos.js?v=20261106e";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106f";
+import { crearMotor } from "./pesos.js?v=20261106f";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -198,12 +198,14 @@ function colsDolares() {
     { k: "ley", t: "Ley", f: b => b.ley, v: b => b.ley },
     { k: "cobra", t: "Cobra", f: b => b.cobra, v: b => b.cobra },
     { k: "vencimiento", t: "Vto.", f: b => fecha(b.vencimiento), v: b => b.vencimiento },
-    { k: "ask", t: "Compra D", n: 1, f: b => conCant(v(b)?.ask, v(b)?.qAsk), v: b => v(b)?.ask, titulo: "Punta vendedora de la línea D (MEP) y nominales ofrecidos" },
+    { k: "ask", t: "Compra D", n: 1, f: b => num(v(b)?.ask), v: b => v(b)?.ask, titulo: "Punta vendedora de la línea D (MEP): a cuánto compras" },
     { k: "tAsk", t: "TIR compra", n: 1, f: b => pct(v(b)?.tAsk), v: b => v(b)?.tAsk },
-    { k: "bid", t: "Venta D", n: 1, cls: "ocultar-movil", f: b => conCant(v(b)?.bid, v(b)?.qBid), v: b => v(b)?.bid, titulo: "Punta compradora de la línea D y nominales pedidos" },
-    { k: "tBid", t: "TIR venta", n: 1, cls: "ocultar-movil", f: b => pct(v(b)?.tBid), v: b => v(b)?.tBid },
+    { k: "bid", t: "Venta D", n: 1, f: b => num(v(b)?.bid), v: b => v(b)?.bid, titulo: "Punta compradora de la línea D (MEP): a cuánto vendes" },
+    { k: "tBid", t: "TIR venta", n: 1, f: b => pct(v(b)?.tBid), v: b => v(b)?.tBid },
     { k: "ancho", t: "Puntas", n: 1, f: b => { const a = v(b)?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => v(b)?.ancho, titulo: "Ancho de puntas D: más de 1% pide orden límite" },
-    { k: "volD", t: "Vol. D", n: 1, cls: "ocultar-movil", f: b => num(v(b)?.vol, 0), v: b => v(b)?.vol, titulo: "Nominales operados hoy en la línea D" },
+    { k: "volD", t: "Vol. negociado", n: 1, f: b => v(b)?.vol > 0 ? cant(v(b).vol) : "—", v: b => v(b)?.vol, titulo: "Nominales operados hoy en la línea D" },
+    { k: "qAsk", t: "VN oferta", n: 1, cls: "ocultar-movil", f: b => cant(v(b)?.qAsk) || "—", v: b => v(b)?.qAsk, titulo: "Nominales ofrecidos a la punta vendedora" },
+    { k: "qBid", t: "VN demanda", n: 1, cls: "ocultar-movil", f: b => cant(v(b)?.qBid) || "—", v: b => v(b)?.qBid, titulo: "Nominales pedidos a la punta compradora" },
   ];
 }
 
@@ -222,7 +224,7 @@ function pDolares() {
       <select name="tipo"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
       ${selLey}${selCobra}${chipLista}
       <label class="chip"><input type="checkbox" name="vivo"> Con punta</label>`),
-    nota(`${filas.length} de ${todos.length} bonos hard dollar · la cifra chica es el nominal a la punta · la línea D de un bono que cobra CCL supone canje cero`),
+    nota(`${filas.length} de ${todos.length} bonos hard dollar · vol. negociado = nominales operados hoy; VN oferta y demanda = lo que hay a cada punta · la línea D de un bono que cobra CCL supone canje cero`),
     tabla(id, filas, colsDolares(), { alClick: ficha, clase: b => enLista(b) ? "mia" : "",
       grupo: b => b.tipo === "on" ? b.emisor : TIPOS[b.segmento] }));
 }
@@ -719,7 +721,7 @@ function pPase() {
 const dec = s => s === "" || s == null ? null : +String(s).replace(",", ".");
 function resultadoPase(A, B, vA, vB) {
   const P = E.pase;
-  if (!A || !B) return `<p class="nota">Elige el bono que vendes y el que compras (ONs y bonos en dólares con flujos de tasa fija). Toca una fila de Dólares para mandarla acá.</p>`;
+  if (!A || !B) return `<p class="nota">Elige el bono que vendes y el que compras (ONs y bonos en dólares con flujos de tasa fija). Toca una fila de Bonos para mandarla acá.</p>`;
   const pA = dec(P.pv) ?? vA?.bid, pB = dec(P.pc) ?? vB?.ask;
   if (!pA || !pB) return `<p class="nota aviso">Falta precio: ${!pA ? A.tk + " sin punta compradora" : ""} ${!pB ? B.tk + " sin punta vendedora" : ""} en la línea ${P.linea}. Escríbelo a mano o actualiza las puntas.</p>`;
   const fA = alinear(A.flujos, A.liq, E.liq), fB = alinear(B.flujos, B.liq, E.liq);
