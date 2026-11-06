@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106f";
-import { crearMotor } from "./pesos.js?v=20261106f";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261106g";
+import { crearMotor } from "./pesos.js?v=20261106g";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -204,8 +204,6 @@ function colsDolares() {
     { k: "tBid", t: "TIR venta", n: 1, f: b => pct(v(b)?.tBid), v: b => v(b)?.tBid },
     { k: "ancho", t: "Puntas", n: 1, f: b => { const a = v(b)?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => v(b)?.ancho, titulo: "Ancho de puntas D: más de 1% pide orden límite" },
     { k: "volD", t: "Vol. negociado", n: 1, f: b => v(b)?.vol > 0 ? cant(v(b).vol) : "—", v: b => v(b)?.vol, titulo: "Nominales operados hoy en la línea D" },
-    { k: "qAsk", t: "VN oferta", n: 1, cls: "ocultar-movil", f: b => cant(v(b)?.qAsk) || "—", v: b => v(b)?.qAsk, titulo: "Nominales ofrecidos a la punta vendedora" },
-    { k: "qBid", t: "VN demanda", n: 1, cls: "ocultar-movil", f: b => cant(v(b)?.qBid) || "—", v: b => v(b)?.qBid, titulo: "Nominales pedidos a la punta compradora" },
   ];
 }
 
@@ -224,7 +222,7 @@ function pDolares() {
       <select name="tipo"><option value="">Todos</option>${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
       ${selLey}${selCobra}${chipLista}
       <label class="chip"><input type="checkbox" name="vivo"> Con punta</label>`),
-    nota(`${filas.length} de ${todos.length} bonos hard dollar · vol. negociado = nominales operados hoy; VN oferta y demanda = lo que hay a cada punta · la línea D de un bono que cobra CCL supone canje cero`),
+    nota(`${filas.length} de ${todos.length} bonos hard dollar · vol. negociado = nominales operados hoy (lo que hay a cada punta, en la ficha) · la línea D de un bono que cobra CCL supone canje cero`),
     tabla(id, filas, colsDolares(), { alClick: ficha, clase: b => enLista(b) ? "mia" : "",
       grupo: b => b.tipo === "on" ? b.emisor : TIPOS[b.segmento] }));
 }
@@ -412,8 +410,8 @@ function ficha(b) {
       ${dato("DM cierre", num(b.dm))}${cj != null ? dato("Canje D/C", pct(cj, 1)) : ""}
       ${b.calificacion ? dato("Calificación", esc(b.calificacion)) : ""}${b.fuente_flujos && b.fuente_flujos !== "BYMA" ? dato("Flujos", esc(b.fuente_flujos)) : ""}
     </div>
-    <div class="tabla-caja"><table><thead><tr><th>Línea</th><th class="n">Compra</th><th class="n">TIR</th><th class="n">Venta</th><th class="n">TIR</th><th class="n">Puntas</th><th class="n">DM</th><th class="n">Vol.</th></tr></thead><tbody>
-      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}${v?.fuente === "BYMA" ? ` <span class="etq" title="Sin puntas en data912: puntas de BYMA, con 20 minutos de demora">BYMA</span>` : ""}</td><td class="n">${conCant(v?.ask, v?.qAsk, usd ? 2 : 3)}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${conCant(v?.bid, v?.qBid, usd ? 2 : 3)}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
+    <div class="tabla-caja"><table><thead><tr><th>Línea</th><th class="n">Compra</th><th class="n">VN oferta</th><th class="n">TIR</th><th class="n">Venta</th><th class="n">VN demanda</th><th class="n">TIR</th><th class="n">Puntas</th><th class="n">DM</th><th class="n">Vol. negociado</th></tr></thead><tbody>
+      ${vivos.map(([l, v]) => `<tr><td>${esc(b.lineas[l])}${v?.fuente === "BYMA" ? ` <span class="etq" title="Sin puntas en data912: puntas de BYMA, con 20 minutos de demora">BYMA</span>` : ""}</td><td class="n">${num(v?.ask, usd ? 2 : 3)}</td><td class="n">${cant(v?.qAsk) || "—"}</td><td class="n">${pct(v?.tAsk)}</td><td class="n">${num(v?.bid, usd ? 2 : 3)}</td><td class="n">${cant(v?.qBid) || "—"}</td><td class="n">${pct(v?.tBid)}</td><td class="n ${v?.ancho > 0.01 ? "aviso" : ""}">${pct(v?.ancho)}</td><td class="n">${num(v?.dm)}</td><td class="n">${num(v?.vol, 0)}</td></tr>`).join("")}
     </tbody></table></div>
     ${b.cobra === "CCL" ? `<p class="nota">Cobra cable: la TIR de la línea D supone canje cero al cobro (piso del comprador en MEP).</p>` : ""}
     ${vivos.some(([, v]) => v?.ancho > 0.01) ? `<p class="nota aviso">Puntas de más de 1%: la TIR de la punta no es ejecutable, hace falta orden límite.</p>` : ""}
