@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261107b";
-import { crearMotor } from "./pesos.js?v=20261107b";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261107c";
+import { crearMotor } from "./pesos.js?v=20261107c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -858,6 +858,9 @@ function rotaciones(A, vA, universo) {
 
 // Pase con nominales reales: lo que entra al vender A, el VN de B redondeado a su regla de negociación, lo que sobra en caja
 // y los dos cashflows lado a lado, fecha por fecha de cobro.
+// semáforo del pase: verde si conviene, rojo si no, amarillo si da casi igual (menos del 0,25% del monto, o de 1 dólar)
+const semaforo = (x, base) => Math.abs(x) <= Math.max(1, Math.abs(base) * 0.0025) ? "aviso" : x > 0 ? "pos" : "neg";
+const VEREDICTO = { pos: "conviene", neg: "no conviene", aviso: "da casi igual" };
 function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
   const P = E.pase, vnA = dec(String(P.vn).replace(/\./g, "")), LA = reglaDe(A), LB = reglaDe(B);
   if (!(vnA > 0)) return `<p class="nota">Escribe el VN que vendes para ver los nominales y los cashflows.</p>`;
@@ -882,23 +885,28 @@ function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
   let acA = 0, acB = sobra;
   const tb = [...filas.values()].sort((x, y) => x.d < y.d ? -1 : 1).map(x => {
     acA += x.a; acB += x.b;
-    return `<tr class="${x.d > vtoA ? "suave" : ""}"><td>${fecha(x.d)}</td><td class="n">${x.a ? num(x.a) : "—"}</td><td class="n">${x.b ? num(x.b) : "—"}</td>
-      <td class="n ${x.b - x.a > 0 ? "pos" : x.b - x.a < 0 ? "neg" : ""}">${num(x.b - x.a)}</td><td class="n">${num(acA)}</td><td class="n">${num(acB)}</td></tr>`;
+    const desp = x.d > vtoA;
+    return `<tr class="${desp ? "suave" : ""}"><td>${fecha(x.d)}</td><td class="n">${x.a ? num(x.a) : "—"}</td><td class="n">${x.b ? num(x.b) : "—"}</td>
+      <td class="n ${desp ? "" : semaforo(x.b - x.a, Math.max(x.a, x.b))}">${num(x.b - x.a)}</td><td class="n">${num(acA)}</td><td class="n ${desp ? "" : semaforo(acB - acA, acA)}">${num(acB)}</td></tr>`;
   }).join("");
   const hastaA = (fl, vn) => vn / 100 * fl.filter(f => f[0] <= r.T).reduce((s, f) => s + f[1] + f[2] + (f[3] || 0), 0);
-  const dif = pasar - quedarse;
+  const dif = pasar - quedarse, sem = semaforo(dif, quedarse);
+  const difCaja = hastaA(fB, vnB) + sobra - hastaA(fA, vnA);
+  // si B sigue vivo después del vencimiento de A, la caja cobrada hasta ahí no compara: a B le falta el capital
+  const semCaja = restoB.length ? "" : semaforo(difCaja, hastaA(fA, vnA)), valeB = restoB.length ? vnB / 100 * vp(restoB, r.yB) : 0;
   return `
       <div class="datos">
         ${dato(`Vendo ${esc(A.tk)}`, num(vnA, 0) + " VN")}${dato("Neto de la venta", num(neto))}
         ${dato(`Compro ${esc(B.tk)}`, num(vnB, 0) + " VN")}${dato("Costo con comisión", num(costo))}${dato("Sobra en caja", num(sobra))}
-        ${dato(`Al ${fecha(vtoA)}`, `<span class="${dif > 0 ? "pos" : "neg"}">${dif > 0 ? "+" : "−"}${num(Math.abs(dif))}</span>`)}
+        ${dato(`Al ${fecha(vtoA)}`, `<span class="${sem}">${dif > 0 ? "+" : "−"}${num(Math.abs(dif))}</span>`)}
       </div>
+      <p class="veredicto"><b class="${sem}">El pase ${VEREDICTO[sem]}</b> al ${fecha(vtoA)}: ${dif > 0 ? "+" : "−"}${num(Math.abs(dif))} contra quedarse con ${esc(A.tk)}, con cupones y caja reinvertidos${restoB.length ? ` y ${esc(B.tk)} valuado a su TIR de hoy` : ""}. ${restoB.length ? `En caja cobrada hasta esa fecha ${esc(B.tk)} da ${difCaja > 0 ? "+" : "−"}${num(Math.abs(difCaja))}, pero no es pérdida: todavía le queda por cobrar ${num(valeB)} a su TIR de hoy.` : `Solo por caja cobrada hasta esa fecha, sin reinvertir: <b class="${semCaja}">${difCaja > 0 ? "+" : "−"}${num(Math.abs(difCaja))} (${VEREDICTO[semCaja]})</b>${semCaja !== sem ? "; la diferencia la hace la reinversión" : ""}.`}</p>
       <p class="nota">Reglas: ${esc(A.tk)} ${textoRegla(LA)} · ${esc(B.tk)} ${textoRegla(LB)} (mínimo: ${esc(LB.fuente)}; incremento: ${esc(LB.sinDato ? "sin dato" : LB.incFuente)}). Al ${fecha(vtoA)}: quedarse vale ${num(quedarse)}, pasar ${num(pasar)} (cupones y caja al ${pct(reinv)}${restoB.length ? `, ${esc(B.tk)} a su TIR de hoy` : ""}).</p>
       <details open><summary>Cashflows en dólares, fecha por fecha</summary>
       <div class="tabla-caja"><table><thead><tr><th>Cobro</th><th class="n">${esc(A.tk)}</th><th class="n">${esc(B.tk)}</th><th class="n">${esc(B.tk)} − ${esc(A.tk)}</th><th class="n">Acum. ${esc(A.tk)}</th><th class="n">Acum. ${esc(B.tk)} + caja</th></tr></thead>
       <tbody><tr><td>${fecha(E.liq)} (pase)</td><td class="n">—</td><td class="n">—</td><td class="n">${num(sobra)}</td><td class="n">—</td><td class="n">${num(sobra)}</td></tr>${tb}</tbody>
-      <tfoot><tr><td><b>Hasta ${fecha(vtoA)}</b></td><td class="n"><b>${num(hastaA(fA, vnA))}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra)}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra - hastaA(fA, vnA))}</b></td><td></td><td></td></tr></tfoot></table></div>
-      <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra.</p></details>`;
+      <tfoot><tr><td><b>Hasta ${fecha(vtoA)}</b></td><td class="n"><b>${num(hastaA(fA, vnA))}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra)}</b></td><td class="n ${semCaja}"><b>${num(difCaja)}</b></td><td></td><td></td></tr></tfoot></table></div>
+      <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra. Colores: <span class="pos">verde</span> ${esc(B.tk)} paga más (o vas adelante en el acumulado), <span class="neg">rojo</span> paga menos (o vas atrás), <span class="aviso">amarillo</span> casi igual (menos del 0,25% o de 1 dólar). Que un cobro salga en rojo no hace malo el pase: manda el veredicto de arriba.</p></details>`;
 }
 
 // Pase de monedas con un bono de las tres líneas: compro en la moneda que tengo (punta vendedora + comisión)
