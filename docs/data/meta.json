@@ -1,18 +1,18 @@
 {
- "cierre": "2026-11-11",
- "liquidacion": "2026-11-12",
- "caucion_tna": 0.22460000000000002,
- "generado": "2026-11-12T02:21:18+00:00",
+ "cierre": "2026-11-12",
+ "liquidacion": "2026-11-13",
+ "caucion_tna": 0.20579999999999998,
+ "generado": "2026-11-13T01:59:53+00:00",
  "fuente": {
   "mercado": "https://tablero.bymaeduca.com.ar/",
   "cobro": "chamomberg.com > ISIN > BYMA",
   "vivo": "data912.com (lo pide el navegador)"
  },
  "conteos": {
-  "ons.json": 229,
-  "pagos.json": 1958,
+  "ons.json": 228,
+  "pagos.json": 1954,
   "soberanos.json": 36,
-  "pesos.json": 44
+  "pesos.json": 43
  },
  "ons_chamomberg": 142,
  "sin_flujos": [
@@ -23,10 +23,10 @@
  ],
  "flujos_chamomberg": [
   "RC7CO",
-  "BGC5O",
-  "BGC6O",
   "NZC2O",
   "NZC5O",
+  "BGC5O",
+  "BGC6O",
   "NPCFO",
   "CIC7O",
   "CP37O",
