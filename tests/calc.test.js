@@ -109,3 +109,12 @@ test("resolver encuentra la raíz o devuelve null", () => {
   expect(resolver(x => x * x - 2, 0, 2)).toBeCloseTo(Math.SQRT2, 9);
   expect(resolver(x => x * x + 1, 0, 2)).toBeNull();
 });
+
+test("bono que cotiza por residual (tipo ARC1): escalar flujos = precio por original", () => {
+  // VR 82,6: quedan 82,6 de capital en 2 cuotas, cupón 6% sobre residual
+  const vr = 82.6, fl = [[180, 41.3, 2.478, 0], [365, 41.3, 1.239, 0]];
+  const px = 101, esc = fl.map(([d, c, r, a]) => [d, c * 100 / vr, r * 100 / vr, a * 100 / vr]);
+  expect(tir(fl, px)).toBeLessThan(0);                          // leído por original: absurdo
+  expect(tir(esc, px)).toBeCloseTo(tir(fl, px * vr / 100), 9);  // escalar flujos ≡ bajar el precio
+  expect(tir(esc, px)).toBeGreaterThan(0.01);
+});

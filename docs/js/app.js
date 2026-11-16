@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116e";
-import { crearMotor } from "./pesos.js?v=20261116e";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116f";
+import { crearMotor } from "./pesos.js?v=20261116f";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -27,14 +27,36 @@ const E = { meta: null, ons: [], soberanos: [], pesos: [], pagos: [], vivo: new 
 
 // ---------- instrumentos ----------
 function lineasON(tk) { const b = tk.slice(0, -1); return { D: b + "D", C: b + "C" }; }
-function lineasSob(tk) { return tk.endsWith("D") ? { D: tk, C: tk.slice(0, -1) + "C" } : { D: tk + "D", C: tk + "C" }; }
+// Provinciales: el ticker de la base es la especie en pesos; las líneas en dólares tienen otro código de BYMA
+// (verificado contra el precio del cierre; data912 lista estas y no las que derivaría la regla general).
+const ALIAS_SOB = { BA37D: "BA7D", BB37D: "BB7D", BC37D: "BC7D", SA24D: "S24D", ERM33: "EM33", NDG34: "NDG4", NDT25: "NDT5", PMM29: "PM29", PUA36: "PUA6", SFD34: "SFD4" };
+function lineasSob(tk) {
+  if (ALIAS_SOB[tk]) return { D: ALIAS_SOB[tk] + "D", C: ALIAS_SOB[tk] + "C" };
+  return tk.endsWith("D") ? { D: tk, C: tk.slice(0, -1) + "C" } : { D: tk + "D", C: tk + "C" };
+}
 
 function normalizar(x, tipo) {
   const lineas = tipo === "on" ? lineasON(x.tk) : tipo === "sob" ? lineasSob(x.tk) : { ARS: x.tk };
   const cobra = tipo === "on" ? x.cobra : tipo === "sob" ? (x.ley === "NY" ? "CCL" : "MEP") : "ARS";
-  return { ...x, tipo, lineas, cobra, px: x.cierre.px, ytm: x.cierre.ytm == null ? null : x.cierre.ytm / 100,
+  const b = { ...x, tipo, lineas, cobra, px: x.cierre.px, ytm: x.cierre.ytm == null ? null : x.cierre.ytm / 100,
     dm: x.cierre.dm, vol: x.cierre.adtv_usd, calculable: ["fix", "cap"].includes(x.tipo_flujos) && x.flujos.length > 0 };
+  if (porResidual(b, b.px)) { b.residual = true; b.ytm = tir(escalar(b.flujos, b), b.px); }
+  return b;
 }
+
+// Algunas ONs amortizables cotizan por 100 de VN RESIDUAL (p. ej. ARC1), no por 100 de VN original como el resto: leído por
+// original, el precio pagaría más que todo lo que le queda al bono (TIR < 0,5%) y leído por residual da una TIR razonable.
+// En esas, los flujos se pasan a 100 de residual, así el precio de pantalla (y el que escribas) se usa tal cual.
+function porResidual(b, px) {
+  if (!(b.vr < 99.9) || !b.calculable || !(px > 0)) return false;
+  const t1 = tir(b.flujos, px), t2 = tir(b.flujos, px * b.vr / 100);
+  return (t1 == null || t1 < 0.005) && t2 != null && t2 > 0.01 && t2 < 0.4;
+}
+const escalar = (fl, b) => b.residual ? fl.map(([d, c, r, a]) => [d, c * 100 / b.vr, r * 100 / b.vr, a * 100 / b.vr]) : fl;
+const flujosHoy = b => escalar(alinear(b.flujos, b.liq, E.liq), b);
+// TIR fuera de lo posible (negativa o de más de 40%): punta vieja, vencimiento de días o flujos dudosos
+const dudosa = t => t != null && (t < 0 || t > 0.4);
+const TIRV = t => dudosa(t) ? `<span class="aviso" title="TIR imposible: punta vieja, vencimiento de días o flujos dudosos; no usar sin revisar">${pct(t)} ⚠</span>` : pct(t);
 
 function enLista(b) {
   if (E.lista.has(b.tk)) return true;
@@ -51,7 +73,10 @@ function enVivo(b, linea) {
 function calcularVivo(b, linea) {
   const q = E.vivo.get(b.lineas[linea]);
   if (!q) return null;
-  const fl = b.calculable ? alinear(b.flujos, b.liq, E.liq) : [];
+  // en una línea en dólares, un precio de miles es la especie en pesos mal rotulada: no sirve
+  if ((linea === "D" || linea === "C") && (q.px_ask > 1000 || q.px_bid > 1000)) return null;
+  if (!b.residual && porResidual(b, q.px_ask > 0 ? q.px_ask : q.px_bid)) b.residual = true;
+  const fl = b.calculable ? flujosHoy(b) : [];
   const ask = q.px_ask > 0 ? q.px_ask : null, bid = q.px_bid > 0 ? q.px_bid : null;
   const tAsk = fl.length && ask ? tir(fl, ask) : null, tBid = fl.length && bid ? tir(fl, bid) : null;
   return { ask, bid, qAsk: ask ? q.q_ask : null, qBid: bid ? q.q_bid : null, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null, fuente: q.fuente,
@@ -62,7 +87,7 @@ function calcularVivo(b, linea) {
 // moneda que la línea elegida (D = MEP, C = CCL), para que el canje no ensucie la comparación. Nunca se mezcla con vivo.
 function deCierre(b, linea) {
   if (!(b.px > 0) || !b.calculable || b.cierre?.fxr !== ({ D: "MEP", C: "CCL" })[linea]) return null;
-  const fl = alinear(b.flujos, b.liq, E.liq), t = tir(fl, b.px);
+  const fl = flujosHoy(b), t = tir(fl, b.px);
   return t == null ? null : { ask: b.px, bid: b.px, tAsk: t, tBid: t, ancho: null, dm: duration(fl, t).modificada, flujos: fl, fuente: "cierre" };
 }
 
@@ -208,9 +233,9 @@ function colsDolares() {
     { k: "cobra", t: "Cobra", f: b => b.cobra, v: b => b.cobra },
     { k: "vencimiento", t: "Vto.", f: b => fecha(b.vencimiento), v: b => b.vencimiento },
     { k: "ask", t: "Compra D", n: 1, f: b => num(v(b)?.ask), v: b => v(b)?.ask, titulo: "Punta vendedora de la línea D (MEP): a cuánto compras" },
-    { k: "tAsk", t: "TIR compra", n: 1, f: b => pct(v(b)?.tAsk), v: b => v(b)?.tAsk },
+    { k: "tAsk", t: "TIR compra", n: 1, f: b => TIRV(v(b)?.tAsk) + (v(b) && b.residual ? ' <small class="cant" title="Cotiza por 100 de VN residual">resid.</small>' : ""), v: b => v(b)?.tAsk },
     { k: "bid", t: "Venta D", n: 1, f: b => num(v(b)?.bid), v: b => v(b)?.bid, titulo: "Punta compradora de la línea D (MEP): a cuánto vendes" },
-    { k: "tBid", t: "TIR venta", n: 1, f: b => pct(v(b)?.tBid), v: b => v(b)?.tBid },
+    { k: "tBid", t: "TIR venta", n: 1, f: b => TIRV(v(b)?.tBid), v: b => v(b)?.tBid },
     { k: "ancho", t: "Puntas", n: 1, f: b => { const a = v(b)?.ancho; return a == null ? "—" : `<span class="${a > 0.01 ? "aviso" : ""}">${pct(a)}</span>`; }, v: b => v(b)?.ancho, titulo: "Ancho de puntas D: más de 1% pide orden límite" },
     { k: "volD", t: "Vol. negociado", n: 1, f: b => v(b)?.vol > 0 ? num(v(b).vol, 0) : "—", v: b => v(b)?.vol, titulo: "Nominales operados hoy en la línea D" },
   ];
@@ -731,7 +756,7 @@ function resultadoPase(A, B, vA, vB) {
   if (!A || !B) return `<p class="nota">Elige el bono que vendes y el que compras (ONs y bonos en dólares con flujos de tasa fija). Toca una fila de Bonos para mandarla acá.</p>`;
   const pA = dec(P.pv) ?? vA?.bid, pB = dec(P.pc) ?? vB?.ask;
   if (!pA || !pB) return `<p class="nota aviso">Falta precio: ${!pA ? A.tk + " sin punta compradora" : ""} ${!pB ? B.tk + " sin punta vendedora" : ""} en la línea ${P.linea}. Escríbelo a mano o actualiza las puntas.</p>`;
-  const fA = alinear(A.flujos, A.liq, E.liq), fB = alinear(B.flujos, B.liq, E.liq);
+  const fA = flujosHoy(A), fB = flujosHoy(B);
   const yA = tir(fA, pA), yB = tir(fB, pB);
   if (yA == null || yB == null) return `<p class="nota aviso">No pude calcular la TIR con esos precios.</p>`;
   const reinv = dec(P.reinv) != null ? dec(P.reinv) / 100 : yA;
@@ -806,7 +831,7 @@ function rotaciones(A, vA, universo) {
   const cierre = !E.vivo.size;
   const pA = A && (dec(P.pv) ?? vA?.bid ?? (cierre ? deCierre(A, P.linea)?.bid : null));
   if (!A || !pA) { cont.innerHTML = ""; return; }
-  const fA = alinear(A.flujos, A.liq, E.liq), yA = tir(fA, pA);
+  const fA = flujosHoy(A), yA = tir(fA, pA);
   if (yA == null) { cont.innerHTML = ""; return; }
   const dmA = duration(fA, yA).modificada;
   const cv = (dec(P.cv) ?? 0) / 100, cc = (dec(P.cc) ?? 0) / 100, reinv = dec(P.reinv) != null ? dec(P.reinv) / 100 : yA;
@@ -818,7 +843,7 @@ function rotaciones(A, vA, universo) {
     const v = cierre ? deCierre(B, P.linea) : enVivo(B, P.linea);
     if (!v?.ask || v.tAsk == null) continue;
     // puntas sin compradora, muy abiertas o TIR absurda: precio que no sirve para rotar
-    if (!v.bid || v.ancho > anchoMax || v.tAsk > 0.3) { raras++; continue; }
+    if (!v.bid || v.ancho > anchoMax || v.tAsk > 0.3 || v.tAsk < 0) { raras++; continue; }
     const r = pase({ fA, pA, fB: v.flujos, pB: v.ask, comVenta: cv, comCompra: cc, reinv });
     // colchón: pb que puede ensancharse B (o bajar la reinversión, si B vence antes) antes de que el pase pierda
     // sin quiebre y sumando: gana con cualquier ensanche (casi todo el flujo cae antes del vencimiento del vendido)
