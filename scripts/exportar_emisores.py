@@ -18,7 +18,9 @@ import io
 import json
 import math
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -69,12 +71,55 @@ PARCHES = {"05_pricing.py": [BAL_3T, FY_JUN],
 def correr(nombre):
     src = (SRC / nombre).read_text()
     for viejo, nuevo in PARCHES.get(nombre, []):
-        if viejo in src:
-            src = src.replace(viejo, nuevo)
+        # si el notebook cambió y el parche ya no encaja, se corta acá: publicar sin IRSA/Cresud o sin el 3T26 sería peor
+        if viejo not in src:
+            raise SystemExit(f"{nombre}: no encontré la línea a parchear ({viejo.strip()[:60]!r}); revisar PARCHES antes de exportar")
+        src = src.replace(viejo, nuevo, 1)
     g = {"__name__": "__exportar__"}
     with contextlib.redirect_stdout(io.StringIO()):
         exec(compile(src, str(SRC / nombre), "exec"), g)
     return g
+
+
+MAESTRO = "/Users/contr/Documents/CEREBRO/Research Corporativos.xlsx"
+# insumos del Excel que no son dato reportado sino estimación propia (van a la ficha y marcan la fila con ≈).
+# Al llegar el dato reportado, se borra la entrada. El detalle del método vive en la hoja Fuentes del maestro.
+ESTIMADOS = {
+    "MSU GREEN": "Intereses pagados del 3T26 estimados con los cupones del contrato (el 9M no los separa por trimestre); "
+                 "el 2T26 sale como residual para que 1T+2T+3T sume el 9M reportado.",
+}
+
+
+def sin_recalcular(path):
+    """Fórmulas sin valor cacheado: pasa cuando la planilla se escribió con openpyxl y nadie la abrió en Excel."""
+    import openpyxl
+    f, v = openpyxl.load_workbook(path), openpyxl.load_workbook(path, data_only=True)
+    return sum(1 for ws in f.worksheets for fila in ws.iter_rows() for c in fila
+               if isinstance(c.value, str) and c.value.startswith("=") and v[ws.title][c.coordinate].value is None)
+
+
+def recalcular_copia():
+    """Si el maestro trae fórmulas sin calcular, Excel recalcula una COPIA temporal (el original no se toca) y todas
+    las lecturas del maestro se desvían a esa copia. Devuelve la ruta usada."""
+    faltan = sin_recalcular(MAESTRO)
+    if not faltan:
+        return MAESTRO
+    copia = Path(tempfile.mkdtemp(prefix="mesa-ons-")) / "maestro.xlsx"
+    shutil.copy2(MAESTRO, copia)
+    guion = (f'tell application "Microsoft Excel"\n open (POSIX file "{copia}")\n delay 3\n set wb to active workbook\n'
+             ' calculate full\n save wb\n close wb saving no\nend tell')
+    subprocess.run(["osascript", "-e", guion], check=True, capture_output=True)
+    if (quedan := sin_recalcular(copia)):
+        raise SystemExit(f"Excel no recalculó la copia: siguen {quedan} fórmulas sin valor")
+    import openpyxl
+    import openpyxl.reader.excel as lector
+    original = openpyxl.load_workbook
+
+    def desviar(f, *a, **k):
+        return original(copia if str(f) == MAESTRO else f, *a, **k)
+    openpyxl.load_workbook = lector.load_workbook = desviar
+    print(f"maestro sin recalcular ({faltan} fórmulas): se usó una copia recalculada en Excel")
+    return str(copia)
 
 
 def limpio(v):
@@ -112,6 +157,7 @@ def armar():
                          "base": limpio(c["puestos"].loc[em, "base"])} if em in rangos else None),
             "inestable": em in c["inestables"],
             "corte": "2T26" if em in jun else "3T26" if em in con3 else str(c["PERIODO"]),
+            "estimados": [ESTIMADOS[em]] if em in ESTIMADOS else [],
         }
     return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
             "generado": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -122,6 +168,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--publicar", action="store_true")
     a = ap.parse_args()
+    recalcular_copia()
+    import sys
+    sys.path[:0] = [str(SRC.parent), str(SRC)]
+    import base_credito
+    base_credito.update_credit_database()   # el parquet que leen los notebooks, desde el maestro ya calculado
     datos = armar()
     SALIDA.mkdir(parents=True, exist_ok=True)
     (SALIDA / "emisores.json").write_text(json.dumps(datos, ensure_ascii=False, separators=(",", ":")))

@@ -164,3 +164,6 @@ h3.sub { margin: 14px 0 0; font-size: 15px; }
 .recibo { font-size: 15px; padding: 10px 12px; border-radius: 8px; background: var(--acento-suave); }
 .recibo b { font-size: 24px; font-variant-numeric: tabular-nums; margin: 0 4px; }
 .recibo .suave { font-size: 12px; }
+.aprox { color: var(--aviso); font-weight: 600; cursor: help; }
+.tabla-caja td:first-child, .tabla-caja th:first-child { box-shadow: inset -1px 0 0 var(--linea); }
+tr.mia td:first-child { box-shadow: inset 3px 0 0 var(--aviso), inset -1px 0 0 var(--linea); }

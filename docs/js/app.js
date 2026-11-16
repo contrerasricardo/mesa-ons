@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116a";
-import { crearMotor } from "./pesos.js?v=20261116a";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116c";
+import { crearMotor } from "./pesos.js?v=20261116c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -815,8 +815,33 @@ function rotaciones(A, vA, universo) {
     let colchon = r.bVenceAntes ? (r.reinvQuiebre != null ? (reinv - r.reinvQuiebre) * 1e4 : null) : r.ensanchePb ?? null;
     if (colchon == null && r.mejora > 0) colchon = Infinity;
     const dMd = v.dm != null ? v.dm - dmA : null;
-    const ver = !(r.mejora > 0) ? "pierde" : !(colchon != null && colchon >= umbral) ? "fina" : dMd != null && dMd <= 0 ? "excelente" : "buena";
-    filas.push({ B, v, r, colchon, ver, dMd, dif: (v.tAsk - yA) * 1e4, c: calif(B) });
+    filas.push({ B, v, r, colchon, dMd, dif: (v.tAsk - yA) * 1e4, c: calif(B) });
+  }
+  // cuánto paga el mercado por cada año de MD: pendiente TIR~MD de los mismos candidatos, dentro de cada calificación
+  // internacional (con 6 o más bonos) o la conjunta dentro de cada calificación. Alargar solo «paga» si la diferencia supera lo que da la curva.
+  const pendiente = xs => {
+    const ok = xs.filter(f => f.v.dm != null);
+    if (ok.length < 6) return null;
+    const mx = ok.reduce((s, f) => s + f.v.dm, 0) / ok.length, my = ok.reduce((s, f) => s + f.v.tAsk, 0) / ok.length;
+    const sxx = ok.reduce((s, f) => s + (f.v.dm - mx) ** 2, 0);
+    return sxx > 0 ? ok.reduce((s, f) => s + (f.v.dm - mx) * (f.v.tAsk - my), 0) / sxx * 1e4 : null;
+  };
+  // respaldo para escalones con menos de 6 bonos: pendiente conjunta DENTRO de cada calificación (efectos fijos), que no
+  // confunde crédito con plazo como la pendiente de todo el universo junto
+  const dentro = (() => {
+    const ok = filas.filter(f => f.v.dm != null), m = new Map();
+    for (const f of ok) { const g = f.c.int ?? "x", a = m.get(g) || { n: 0, x: 0, y: 0 }; a.n++; a.x += f.v.dm; a.y += f.v.tAsk; m.set(g, a); }
+    let sxx = 0, sxy = 0;
+    for (const f of ok) { const a = m.get(f.c.int ?? "x"), dx = f.v.dm - a.x / a.n; sxx += dx * dx; sxy += dx * (f.v.tAsk - a.y / a.n); }
+    return sxx > 0 ? sxy / sxx * 1e4 : 0;
+  })();
+  const pGlobal = dentro, porGrupo = new Map();
+  for (const f of filas) { const g = f.c.int ?? "x"; porGrupo.has(g) || porGrupo.set(g, pendiente(filas.filter(h => (h.c.int ?? "x") === g)) ?? pGlobal); }
+  for (const f of filas) {
+    f.pend = porGrupo.get(f.c.int ?? "x");
+    f.exceso = f.dMd == null ? null : f.dif - Math.max(0, f.pend) * Math.max(0, f.dMd);
+    f.ver = !(f.r.mejora > 0) ? "pierde" : !(f.colchon != null && f.colchon >= umbral) ? "fina"
+      : f.dMd != null && f.dMd <= 0 ? "excelente" : f.exceso != null && f.exceso <= 0 ? "fina" : "buena";
   }
   const n = { excelente: 0, buena: 0, fina: 0, pierde: 0 }; filas.forEach(f => n[f.ver]++);
   // sin orden elegido: por calificación (internacional, después local) y, dentro de cada escalón, por lo que suma
@@ -824,16 +849,17 @@ function rotaciones(A, vA, universo) {
   const ETQ = { excelente: '<span class="pos tk">Excelente</span>', buena: '<span class="pos">Buena</span>', fina: '<span class="aviso tk">Fina</span>', pierde: '<span class="neg">Pierde</span>' };
   const cols = [
     { k: "tk", t: "Compro", f: x => `<span class="tk">${esc(x.B.tk)}</span>`, v: x => x.B.tk },
+    { k: "ver", t: "Rotación", f: x => ETQ[x.ver], v: x => ({ excelente: 3, buena: 2, fina: 1, pierde: 0 })[x.ver] },
     { k: "emisor", t: "Emisor", cls: "emisor ocultar-movil", f: x => esc(x.B.emisor), v: x => x.B.emisor },
     { k: "calif", t: "Calif.", f: x => (x.c.int != null ? `<b>${ESCALA[x.c.int]}</b>${x.c.heredada ? ' <small class="cant">emisor</small>' : ""}` : "—") + (x.c.loc != null ? ` <small class="cant">${ESCALA[x.c.loc]} local</small>` : ""), v: x => -nCalif(x.c), titulo: "Internacional en negrita (manda); local al lado. «emisor»: el bono no la trae y hereda la peor del emisor" },
     { k: "vto", t: "Vence", f: x => fecha(x.B.vencimiento), v: x => x.B.vencimiento },
     { k: "cobra", t: "Cobra", cls: "ocultar-movil", f: x => esc(x.B.cobra), v: x => x.B.cobra },
     { k: "tir", t: "TIR", n: 1, f: x => pct(x.v.tAsk), v: x => x.v.tAsk },
     { k: "dif", t: "Dif.", n: 1, f: x => pb(x.dif) + " pb", v: x => x.dif, titulo: `TIR de compra − TIR de venta de ${A.tk}` },
-    { k: "dmd", t: "Δ MD", n: 1, f: x => x.dMd == null ? "—" : `<span class="${x.dMd <= 0 ? "pos" : x.dMd > 2 ? "aviso" : ""}">${x.dMd > 0 ? "+" : ""}${num(x.dMd, 2)}</span>`, v: x => x.dMd, titulo: `Duration modificada del comprado − la de ${A.tk} (${num(dmA, 2)}): negativo recorta, positivo alarga` },
+    { k: "dmd", t: "Δ MD", n: 1, f: x => x.dMd == null ? "—" : `<span class="${x.dMd <= 0 ? "pos" : x.exceso <= 0 ? "aviso" : ""}">${x.dMd > 0 ? "+" : ""}${num(x.dMd, 2)}</span>`, v: x => x.dMd, titulo: `Duration modificada del comprado − la de ${A.tk} (${num(dmA, 2)}): negativo recorta, positivo alarga` },
+    { k: "exceso", t: "vs curva", n: 1, f: x => x.exceso == null ? "—" : x.dMd <= 0 ? `<span class="suave">recorta</span>` : `<span class="${x.exceso > 0 ? "pos" : "aviso"}">${pb(x.exceso)} pb</span>`, v: x => x.dMd <= 0 ? Infinity : x.exceso, titulo: "Dif. de TIR menos lo que la curva de su misma calificación paga por la MD que se agrega (pendiente TIR~MD × Δ MD). Positivo: el alargue está bien pagado" },
     { k: "mejora", t: "Suma neto", n: 1, f: x => `<span class="${x.r.mejora > 0 ? "pos" : "neg"}">${pct(x.r.mejora)}</span>`, v: x => x.r.mejora, titulo: `Al vencimiento de ${A.tk}, neto de comisiones, si el bono comprado mantiene su TIR` },
     { k: "colchon", t: "Colchón", n: 1, f: x => x.colchon == null ? "—" : x.colchon > 2000 ? "sin quiebre" : `${pb(x.colchon)} pb${x.r.bVenceAntes ? ' <small class="cant">reinv.</small>' : ""}`, v: x => x.colchon, titulo: "Cuánto puede ensancharse el bono comprado (o bajar la reinversión, si vence antes) sin que el pase pierda" },
-    { k: "ver", t: "Rotación", f: x => ETQ[x.ver], v: x => ({ excelente: 3, buena: 2, fina: 1, pierde: 0 })[x.ver] },
     { k: "ancho", t: "Puntas", n: 1, cls: "ocultar-movil", f: x => x.v.ancho == null ? "—" : `<span class="${x.v.ancho > 0.01 ? "aviso" : ""}">${pct(x.v.ancho)}</span>`, v: x => x.v.ancho },
   ];
   const tipos = [...new Set(universo.map(b => b.tipo))], cobras = [...new Set(universo.map(b => b.cobra))].filter(Boolean);
@@ -848,7 +874,7 @@ function rotaciones(A, vA, universo) {
     </div>
     <p class="nota">Vendo ${esc(A.tk)} a ${num(pA)} (TIR ${pct(yA)}, MD ${num(dmA, 2)}) en la línea ${esc(P.linea)} · comisiones ${pct(cv)} venta + ${pct(cc)} compra · cupones al ${pct(reinv)} · <span class="pos">${n.excelente} excelentes, ${n.buena} buenas</span>, <span class="aviso">${n.fina} finas</span>, ${n.pierde} pierden${raras ? ` · ${raras} sin compradora, con puntas de más del ${pct(anchoMax, 1)} o TIR de más de 30%, afuera` : ""}. Agrupadas por calificación internacional (la local solo desempata); toca un encabezado para otro orden y una fila para verla arriba con los nominales.</p>`;
   cont.append(tabla("rot", vista, cols, { grupo: x => grupoCalif(x.c), alClick: x => { P.compro = x.B.tk; P.pc = ""; guardado.escribir("pase", { ...guardado.leer("pase", {}), compro: P.compro }); pPase(); scrollTo({ top: 0, behavior: "smooth" }); } }));
-  cont.insertAdjacentHTML("beforeend", `<p class="nota">Excelente: suma neto de comisiones, aguanta al menos ${num(umbral, 0)} pb en contra y recorta (o iguala) la duration modificada: más tasa con menos riesgo de tasa. Buena: lo mismo, pero alargando la MD. Fina: suma, pero con menos colchón. «Sin quiebre»: gana aunque el bono comprado se ensanche cualquier cosa, porque casi todo su flujo cae antes. La diferencia de TIR también es diferencia de crédito: pasar a otro emisor cambia el riesgo. Con monedas de cobro distintas, el canje entra aparte. Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`);
+  cont.insertAdjacentHTML("beforeend", `<p class="nota">Excelente: suma neto de comisiones, aguanta al menos ${num(umbral, 0)} pb en contra y recorta (o iguala) la duration modificada: más tasa con menos riesgo de tasa. Buena: lo mismo, pero alargando la MD y cobrando por ese alargue más de lo que paga la curva de su calificación («vs curva» positivo). Fina: suma, pero con menos colchón o con un alargue que la curva paga mejor. «Sin quiebre»: gana aunque el bono comprado se ensanche cualquier cosa, porque casi todo su flujo cae antes. La diferencia de TIR también es diferencia de crédito: pasar a otro emisor cambia el riesgo. Con monedas de cobro distintas, el canje entra aparte. Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`);
   cont.querySelectorAll(".filtros [name]").forEach(c => c.addEventListener("change", () => {
     P[c.name] = c.type === "checkbox" ? (c.checked ? "todas" : "") : c.value.trim();
     guardado.escribir("pase", { ...guardado.leer("pase", {}), colchon: P.colchon, rtipo: P.rtipo, rcobra: P.rcobra, rancho: P.rancho });
@@ -858,8 +884,12 @@ function rotaciones(A, vA, universo) {
 
 // Pase con nominales reales: lo que entra al vender A, el VN de B redondeado a su regla de negociación, lo que sobra en caja
 // y los dos cashflows lado a lado, fecha por fecha de cobro.
-// semáforo del pase: verde si conviene, rojo si no, amarillo si da casi igual (menos del 0,25% del monto, o de 1 dólar)
-const semaforo = (x, base) => Math.abs(x) <= Math.max(1, Math.abs(base) * 0.0025) ? "aviso" : x > 0 ? "pos" : "neg";
+// semáforo del pase: verde si conviene, rojo si no, amarillo si da casi igual: la diferencia no paga ni la comisión de una punta
+// (lo que costaría deshacer el pase), con piso de 0,25% del monto o 1 dólar
+const semaforo = (x, base) => {
+  const com = Math.max((dec(E.pase?.cv) ?? 0) / 100, (dec(E.pase?.cc) ?? 0) / 100, 0.0025);
+  return Math.abs(x) <= Math.max(1, Math.abs(base) * com) ? "aviso" : x > 0 ? "pos" : "neg";
+};
 const VEREDICTO = { pos: "conviene", neg: "no conviene", aviso: "da casi igual" };
 function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
   const P = E.pase, vnA = dec(String(P.vn).replace(/\./g, "")), LA = reglaDe(A), LB = reglaDe(B);
@@ -906,7 +936,7 @@ function nominalesPase(A, B, fA, fB, pA, pB, r, reinv, avisos) {
       <div class="tabla-caja"><table><thead><tr><th>Cobro</th><th class="n">${esc(A.tk)}</th><th class="n">${esc(B.tk)}</th><th class="n">${esc(B.tk)} − ${esc(A.tk)}</th><th class="n">Acum. ${esc(A.tk)}</th><th class="n">Acum. ${esc(B.tk)} + caja</th></tr></thead>
       <tbody><tr><td>${fecha(E.liq)} (pase)</td><td class="n">—</td><td class="n">—</td><td class="n">${num(sobra)}</td><td class="n">—</td><td class="n">${num(sobra)}</td></tr>${tb}</tbody>
       <tfoot><tr><td><b>Hasta ${fecha(vtoA)}</b></td><td class="n"><b>${num(hastaA(fA, vnA))}</b></td><td class="n"><b>${num(hastaA(fB, vnB) + sobra)}</b></td><td class="n ${semCaja}"><b>${num(difCaja)}</b></td><td></td><td></td></tr></tfoot></table></div>
-      <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra. Colores: <span class="pos">verde</span> ${esc(B.tk)} paga más (o vas adelante en el acumulado), <span class="neg">rojo</span> paga menos (o vas atrás), <span class="aviso">amarillo</span> casi igual (menos del 0,25% o de 1 dólar). Que un cobro salga en rojo no hace malo el pase: manda el veredicto de arriba.</p></details>`;
+      <p class="nota">Sin descontar ni reinvertir; en gris, lo que ${esc(B.tk)} paga después del vencimiento de ${esc(A.tk)}. El total de ${esc(B.tk)} incluye la caja que sobra. Colores: <span class="pos">verde</span> ${esc(B.tk)} paga más (o vas adelante en el acumulado), <span class="neg">rojo</span> paga menos (o vas atrás), <span class="aviso">amarillo</span> casi igual (la diferencia no paga ni la comisión de una punta, con piso de 0,25% o 1 dólar). Que un cobro salga en rojo no hace malo el pase: manda el veredicto de arriba.</p></details>`;
 }
 
 // Pase de monedas con un bono de las tres líneas: compro en la moneda que tengo (punta vendedora + comisión)
@@ -982,6 +1012,7 @@ function resultadoMonedas(qC, qV) {
 }
 
 // ---------- emisores ----------
+const APROX = t => ` <span class="aprox" title="${esc(t)}">≈</span>`;
 const CORTO = { "Solidez de balance": "Balance", "Cobertura de intereses": "Cobertura", "Caja después de invertir": "Caja post-inv.", "Liquidez": "Liquidez", "Lo que dicen los modelos": "Modelos", "Capacidad de pago": "Cap. de pago", "Promedio": "Promedio" };
 async function pEmisores() {
   const el = $("#p-emisores");
@@ -997,16 +1028,16 @@ async function pEmisores() {
     { k: "em", t: "Emisor", f: x => `<span class="tk">${esc(x.em)}</span>${x.inestable ? ' <span class="aviso" title="El orden cambia mucho al sacar una cualidad">⚠</span>' : ""}`, v: x => x.em },
     { k: "sector", t: "Sector", cls: "ocultar-movil", f: x => esc(x.sector), v: x => x.sector },
     { k: "corte", t: "Corte", f: x => x.corte === "3T26" ? `<span class="etq">3T26</span>` : `<span class="suave">${esc(x.corte || d.corte)}</span>`, v: x => x.corte, titulo: "Último trimestre del balance usado" },
-    ...nombres.map(q => ({ k: "q:" + q, t: CORTO[q] || q, titulo: q, n: 1, f: x => `<span class="${q === "Promedio" ? "tk" : ""}">${num(x.cualidades[q], 0)}</span>`, v: x => x.cualidades[q] })),
-    { k: "exig", t: "TIR exigida", n: 1, f: x => pct(x.pricing["TIR exigida"]), v: x => x.pricing["TIR exigida"], titulo: "Merton + spread soberano" },
-    { k: "merc", t: "TIR mercado", n: 1, f: x => pct(x.pricing["TIR mercado"]), v: x => x.pricing["TIR mercado"] },
+    ...nombres.map(q => ({ k: "q:" + q, t: CORTO[q] || q, titulo: q, n: 1, f: x => `<span class="${q === "Promedio" ? "tk" : ""}">${num(x.cualidades[q], 0)}</span>${q === "Promedio" && x.estimados?.length ? APROX("Hay insumos del balance estimados: ver la ficha") : ""}`, v: x => x.cualidades[q] })),
+    { k: "exig", t: "TIR exigida", n: 1, f: x => pct(x.pricing["TIR exigida"]) + (x.metricas.estimado ? APROX("Sin acciones que coticen: el valor de los activos del Merton es estimado") : ""), v: x => x.pricing["TIR exigida"], titulo: "Merton + spread soberano" },
+    { k: "merc", t: "TIR mercado", n: 1, f: x => pct(x.pricing["TIR mercado"]) + (x.metricas["TIR lejana"] ? APROX(x.metricas["TIR equivalente"] ? "TIR de un bono equivalente, no del emisor" : "TIR de un bono de plazo lejano al horizonte") : ""), v: x => x.pricing["TIR mercado"] },
     { k: "dif", t: "Paga de más", n: 1, f: x => { const v = x.pricing["Dif. mercado - exigida"]; return v == null ? "—" : `<span class="${v > 0 ? "pos" : "neg"}">${pb(v * 1e4)} pb</span>`; }, v: x => x.pricing["Dif. mercado - exigida"], titulo: "TIR de mercado − TIR exigida: positivo = barato" },
     { k: "pd", t: "PD 1 año", n: 1, cls: "ocultar-movil", f: x => pct(x.pricing.PD_1y), v: x => x.pricing.PD_1y },
     { k: "puesto", t: "Puesto", n: 1, f: x => x.puestos ? `${num(x.puestos.base, 0)} <span class="suave">(${num(x.puestos.min, 0)}–${num(x.puestos.max, 0)})</span>` : "—", v: x => x.puestos?.base, titulo: "Puesto base y rango al sacar una cualidad por vez" },
   ];
   if (!E.orden.emisores) E.orden.emisores = { k: "q:Promedio", asc: false };
   el.replaceChildren(
-    nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más»`),
+    nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más» · <span class="aprox">≈</span> = el número se apoya en un dato estimado (pasa el mouse o abre la ficha). Ojo: los emisores con corte distinto se comparan con balances de trimestres distintos`),
     tabla("emisores", filas, cols, { alClick: fichaEmisor }),
     Object.assign(document.createElement("div"), { className: "lectura", innerHTML: d.lectura_html }));
 }
@@ -1035,7 +1066,8 @@ function fichaEmisor(x) {
     <div class="datos">${Object.entries(x.cualidades).map(([k, v]) => dato(esc(k), v == null ? "n/d" : num(v, 0))).join("")}</div>
     ${pricing}
     <div class="tabla-caja"><table><thead><tr><th>Métrica</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.metricas)}</tbody></table></div>
-    ${banderas.length ? `<p class="nota">Ojo: ${banderas.join(" · ")}.</p>` : ""}</div>`;
+    ${banderas.length ? `<p class="nota">Ojo: ${banderas.join(" · ")}.</p>` : ""}
+    ${(x.estimados || []).map(t => `<p class="nota aviso"><span class="aprox">≈</span> ${esc(t)}</p>`).join("")}</div>`;
   dlg.querySelector("[data-cerrar]").onclick = () => dlg.close();
   if (!dlg.open) dlg.showModal();
 }
