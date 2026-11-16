@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116d";
-import { crearMotor } from "./pesos.js?v=20261116d";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116e";
+import { crearMotor } from "./pesos.js?v=20261116e";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -90,11 +90,12 @@ async function cargar() {
 
 // Puntas de dos fuentes a 24 hs: data912 (al momento) y BYMA Data abierto (oficial, con 20 minutos de demora).
 // Manda data912; BYMA completa la especie que data912 no trae o trae sin puntas, y queda sola si data912 no responde.
+// Cada fuente tiene 10 s: BYMA a veces deja la conexión colgada sin error, y sin tope tapaba también a data912.
 const BYMA_LIBRE = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/";
 const conPuntas = q => q && (q.px_bid > 0 || q.px_ask > 0);
 function pedirBYMA(panel, ci = false) {
   const cuerpo = { excludeZeroPxAndQty: true, T0: ci, T1: !ci, T2: false, page_number: 1, page_size: 5000, "Content-Type": "application/json" };
-  return fetch(BYMA_LIBRE + panel, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo), cache: "no-store" })
+  return fetch(BYMA_LIBRE + panel, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo), cache: "no-store", signal: AbortSignal.timeout(10000) })
     .then(x => x.json()).then(d => (d.data || d).map(r => ({ symbol: r.symbol, px_bid: r.bidPrice, px_ask: r.offerPrice, q_bid: r.quantityBid,
       q_ask: r.quantityOffer, c: r.trade, v: r.volume, fuente: "BYMA" })));
 }
@@ -108,7 +109,7 @@ async function pedirVivo1() {
   const d912 = ["arg_corp", "arg_bonds", "arg_notes"], byma = ["negociable-obligations", "public-bonds"];
   $("#btn-vivo").disabled = true;
   const [a, b, ci] = await Promise.all([
-    Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store" }).then(x => {
+    Promise.allSettled(d912.map(f => fetch(`https://data912.com/live/${f}`, { cache: "no-store", signal: AbortSignal.timeout(10000) }).then(x => {
       if (f === "arg_corp") E.lmD912 = Date.parse(x.headers.get("last-modified")) || null;
       return x.json();
     }))),
