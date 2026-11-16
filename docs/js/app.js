@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116c";
-import { crearMotor } from "./pesos.js?v=20261116c";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261116d";
+import { crearMotor } from "./pesos.js?v=20261116d";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -56,6 +56,14 @@ function calcularVivo(b, linea) {
   const tAsk = fl.length && ask ? tir(fl, ask) : null, tBid = fl.length && bid ? tir(fl, bid) : null;
   return { ask, bid, qAsk: ask ? q.q_ask : null, qBid: bid ? q.q_bid : null, ultimo: q.c || null, tAsk, tBid, vol: q.v, ancho: ask && bid ? ask / bid - 1 : null, fuente: q.fuente,
     dm: tAsk != null ? duration(fl, tAsk).modificada : null, flujos: fl };
+}
+
+// Sin ninguna punta en vivo (data912 y BYMA caídos): el cierre como precio de referencia, solo si cotizó en la misma
+// moneda que la línea elegida (D = MEP, C = CCL), para que el canje no ensucie la comparación. Nunca se mezcla con vivo.
+function deCierre(b, linea) {
+  if (!(b.px > 0) || !b.calculable || b.cierre?.fxr !== ({ D: "MEP", C: "CCL" })[linea]) return null;
+  const fl = alinear(b.flujos, b.liq, E.liq), t = tir(fl, b.px);
+  return t == null ? null : { ask: b.px, bid: b.px, tAsk: t, tBid: t, ancho: null, dm: duration(fl, t).modificada, flujos: fl, fuente: "cierre" };
 }
 
 function canje(b) {
@@ -794,7 +802,8 @@ const grupoCalif = c => c.int != null ? `Internacional ${ESCALA[c.int]}` : c.loc
 // buena = suma y aguanta el colchón, pero alarga; fina = suma pero con poco margen.
 function rotaciones(A, vA, universo) {
   const P = E.pase, cont = $("#rot-pase");
-  const pA = A && (dec(P.pv) ?? vA?.bid);
+  const cierre = !E.vivo.size;
+  const pA = A && (dec(P.pv) ?? vA?.bid ?? (cierre ? deCierre(A, P.linea)?.bid : null));
   if (!A || !pA) { cont.innerHTML = ""; return; }
   const fA = alinear(A.flujos, A.liq, E.liq), yA = tir(fA, pA);
   if (yA == null) { cont.innerHTML = ""; return; }
@@ -805,7 +814,7 @@ function rotaciones(A, vA, universo) {
   let raras = 0;
   for (const B of universo) {
     if (B.tk === A.tk || (P.rtipo && B.tipo !== P.rtipo) || (P.rcobra && B.cobra !== P.rcobra)) continue;
-    const v = enVivo(B, P.linea);
+    const v = cierre ? deCierre(B, P.linea) : enVivo(B, P.linea);
     if (!v?.ask || v.tAsk == null) continue;
     // puntas sin compradora, muy abiertas o TIR absurda: precio que no sirve para rotar
     if (!v.bid || v.ancho > anchoMax || v.tAsk > 0.3) { raras++; continue; }
@@ -872,7 +881,7 @@ function rotaciones(A, vA, universo) {
       <label class="campo">Cobra en<select name="rcobra">${op(cobras, P.rcobra, t => t)}</select></label>
       <label class="chip"><input type="checkbox" name="rver"${P.rver === "todas" ? " checked" : ""}> Ver también las que pierden</label>
     </div>
-    <p class="nota">Vendo ${esc(A.tk)} a ${num(pA)} (TIR ${pct(yA)}, MD ${num(dmA, 2)}) en la línea ${esc(P.linea)} · comisiones ${pct(cv)} venta + ${pct(cc)} compra · cupones al ${pct(reinv)} · <span class="pos">${n.excelente} excelentes, ${n.buena} buenas</span>, <span class="aviso">${n.fina} finas</span>, ${n.pierde} pierden${raras ? ` · ${raras} sin compradora, con puntas de más del ${pct(anchoMax, 1)} o TIR de más de 30%, afuera` : ""}. Agrupadas por calificación internacional (la local solo desempata); toca un encabezado para otro orden y una fila para verla arriba con los nominales.</p>`;
+    ${cierre ? `<p class="nota aviso">Sin puntas en vivo: se usan los precios del cierre del ${fecha(E.meta?.cierre ?? "")} (solo bonos que cerraron en ${P.linea === "C" ? "cable" : "MEP"}), como referencia. Antes de operar, actualiza las puntas.</p>` : ""}<p class="nota">Vendo ${esc(A.tk)} a ${num(pA)} (TIR ${pct(yA)}, MD ${num(dmA, 2)}) en la línea ${esc(P.linea)} · comisiones ${pct(cv)} venta + ${pct(cc)} compra · cupones al ${pct(reinv)} · <span class="pos">${n.excelente} excelentes, ${n.buena} buenas</span>, <span class="aviso">${n.fina} finas</span>, ${n.pierde} pierden${raras ? ` · ${raras} sin compradora, con puntas de más del ${pct(anchoMax, 1)} o TIR de más de 30%, afuera` : ""}. Agrupadas por calificación internacional (la local solo desempata); toca un encabezado para otro orden y una fila para verla arriba con los nominales.</p>`;
   cont.append(tabla("rot", vista, cols, { grupo: x => grupoCalif(x.c), alClick: x => { P.compro = x.B.tk; P.pc = ""; guardado.escribir("pase", { ...guardado.leer("pase", {}), compro: P.compro }); pPase(); scrollTo({ top: 0, behavior: "smooth" }); } }));
   cont.insertAdjacentHTML("beforeend", `<p class="nota">Excelente: suma neto de comisiones, aguanta al menos ${num(umbral, 0)} pb en contra y recorta (o iguala) la duration modificada: más tasa con menos riesgo de tasa. Buena: lo mismo, pero alargando la MD y cobrando por ese alargue más de lo que paga la curva de su calificación («vs curva» positivo). Fina: suma, pero con menos colchón o con un alargue que la curva paga mejor. «Sin quiebre»: gana aunque el bono comprado se ensanche cualquier cosa, porque casi todo su flujo cae antes. La diferencia de TIR también es diferencia de crédito: pasar a otro emisor cambia el riesgo. Con monedas de cobro distintas, el canje entra aparte. Diagnóstico: la ejecución queda sujeta a la autorización del cliente.</p>`);
   cont.querySelectorAll(".filtros [name]").forEach(c => c.addEventListener("change", () => {
