@@ -1,8 +1,8 @@
 {
- "cierre": "2026-11-13",
- "liquidacion": "2026-11-16",
- "caucion_tna": 0.1989,
- "generado": "2026-11-14T01:31:59+00:00",
+ "cierre": "2026-11-16",
+ "liquidacion": "2026-11-17",
+ "caucion_tna": 0.1956,
+ "generado": "2026-11-17T07:37:27+00:00",
  "fuente": {
   "mercado": "https://tablero.bymaeduca.com.ar/",
   "cobro": "chamomberg.com > ISIN > BYMA",
