@@ -179,7 +179,7 @@ def armar():
             "puestos": ({"min": limpio(rangos[em][0]), "max": limpio(rangos[em][1]),
                          "base": limpio(c["puestos"].loc[em, "base"])} if em in rangos else None),
             "inestable": em in c["inestables"],
-            "corte": "2T26" if em in jun else "3T26" if em in con3 else str(c["PERIODO"]),
+            "corte": "2T26" if em in jun else ("3T26 · LTM jun" if em in p["_jn3"] else "3T26") if em in con3 else str(c["PERIODO"]),
             "estimados": [ESTIMADOS[em]] if em in ESTIMADOS else [],
         }
     return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
