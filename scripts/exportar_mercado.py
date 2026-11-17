@@ -164,6 +164,11 @@ def corregir_cupones(bonos):
     return hechos
 
 
+def lineas_byma(r):
+    a = r.get("adtve") or []
+    return {"D": a[1] if len(a) > 1 else None, "C": a[2] if len(a) > 2 else None} if len(a) > 1 else None
+
+
 def main():
     d = cargar()
     chamo = chamomberg()
@@ -239,7 +244,9 @@ def main():
         with LAMINAS.open(newline="", encoding="utf-8") as f:
             manual = {r["prefijo"].strip().upper(): r for r in csv.DictReader(r for r in f if not r.startswith("#"))}
     tp = d["tp"]["rows"]
-    soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"]}
+    # líneas en dólares (D = MEP, C = cable) con el nombre que les da BYMA (`adtve`: [pesos, D, C]); varias provinciales
+    # no siguen la regla del ticker (BDC33 → BC33D, CO24D → DCO24)
+    soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"], "lineas_byma": lineas_byma(r)}
                  for r in tp if r["me"] == "USD" and r["seg"] in ("sob", "pro")]
     byma = denominaciones_byma([o["tk"] for o in ons + soberanos])
     for o in ons + soberanos:

@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261117b";
-import { crearMotor } from "./pesos.js?v=20261117b";
+import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261117c";
+import { crearMotor } from "./pesos.js?v=20261117c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -30,13 +30,16 @@ function lineasON(tk) { const b = tk.slice(0, -1); return { D: b + "D", C: b + "
 // Provinciales: el ticker de la base es la especie en pesos; las líneas en dólares tienen otro código de BYMA
 // (verificado contra el precio del cierre; data912 lista estas y no las que derivaría la regla general).
 const ALIAS_SOB = { BA37D: "BA7D", BB37D: "BB7D", BC37D: "BC7D", SA24D: "S24D", ERM33: "EM33", NDG34: "NDG4", NDT25: "NDT5", PMM29: "PM29", PUA36: "PUA6", SFD34: "SFD4" };
-function lineasSob(tk) {
+function lineasSob(tk, x) {
+  // manda el nombre que publica BYMA para cada línea (docs/data/soberanos.json, `lineas_byma`); el alias y la regla quedan de respaldo
+  const lb = x && x.lineas_byma;
+  if (lb && lb.D) return lb.C ? { D: lb.D, C: lb.C } : { D: lb.D };
   if (ALIAS_SOB[tk]) return { D: ALIAS_SOB[tk] + "D", C: ALIAS_SOB[tk] + "C" };
   return tk.endsWith("D") ? { D: tk, C: tk.slice(0, -1) + "C" } : { D: tk + "D", C: tk + "C" };
 }
 
 function normalizar(x, tipo) {
-  const lineas = tipo === "on" ? lineasON(x.tk) : tipo === "sob" ? lineasSob(x.tk) : { ARS: x.tk };
+  const lineas = tipo === "on" ? lineasON(x.tk) : tipo === "sob" ? lineasSob(x.tk, x) : { ARS: x.tk };
   const cobra = tipo === "on" ? x.cobra : tipo === "sob" ? (x.ley === "NY" ? "CCL" : "MEP") : "ARS";
   const b = { ...x, tipo, lineas, cobra, px: x.cierre.px, ytm: x.cierre.ytm == null ? null : x.cierre.ytm / 100,
     dm: x.cierre.dm, vol: x.cierre.adtv_usd, calculable: ["fix", "cap"].includes(x.tipo_flujos) && x.flujos.length > 0 };
