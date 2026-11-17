@@ -27,6 +27,7 @@ SALIDA = RAIZ / "docs/data"
 CHAMO = RAIZ / "data/reference/ons-chamomberg.csv"
 MANUALES = RAIZ / "data/reference/flujos-manuales.csv"  # ONs que no están en BYMA ni en chamomberg
 LAMINAS = RAIZ / "data/reference/laminas.csv"  # regla de negociación confirmada en el prospecto: manda sobre chamomberg
+CUPONES = RAIZ / "data/reference/cupones.csv"  # cupón confirmado en el suplemento de precio, cuando BYMA publica otro
 URL = "https://tablero.bymaeduca.com.ar/"
 CHAMO_WEB = "https://chamomberg.com/"
 FICHA_BYMA = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/bnown/fichatecnica/especies/general"
@@ -127,6 +128,42 @@ def instrumento(r, i):
     }
 
 
+def tir_duration(flujos, px):
+    """TIR efectiva anual (%) y duration modificada con flujos [días, capital, renta, ajuste] y precio sucio; misma convención
+    que docs/js/calc.js. Bisección: sin solución, (None, None)."""
+    vp = lambda y: sum((c + r + a) / (1 + y) ** (d / 365) for d, c, r, a in flujos)
+    lo, hi = -0.9, 10.0
+    if not px or not flujos or (vp(lo) - px) * (vp(hi) - px) > 0:
+        return None, None
+    for _ in range(200):
+        m = (lo + hi) / 2
+        lo, hi = (m, hi) if vp(m) > px else (lo, m)
+    y = (lo + hi) / 2
+    mac = sum(d / 365 * (c + r + a) / (1 + y) ** (d / 365) for d, c, r, a in flujos) / vp(y)
+    return round(y * 100, 4), round(mac / (1 + y), 4)
+
+
+def corregir_cupones(bonos):
+    """Aplica data/reference/cupones.csv: cupón del suplemento de precio, renta de los flujos reescalada y TIR/duration de
+    cierre recalculadas. Devuelve los tickers corregidos."""
+    if not CUPONES.exists():
+        return []
+    with CUPONES.open(newline="", encoding="utf-8") as f:
+        ok = {r["tk"].strip().upper(): float(r["cupon"]) for r in csv.DictReader(l for l in f if not l.startswith("#"))}
+    hechos = []
+    for o in bonos:
+        c = ok.get(o["tk"])
+        if c is None or not o.get("cupon") or abs(o["cupon"] - c) < 1e-9:
+            continue
+        k = c / o["cupon"]
+        o["cupon_byma"], o["cupon"] = o["cupon"], c
+        o["flujos"] = redondear([[d, cap, r * k, a] for d, cap, r, a in o["flujos"]])
+        if o["cierre"]["px"]:
+            o["cierre"]["ytm"], o["cierre"]["dm"] = tir_duration(o["flujos"], o["cierre"]["px"])
+        hechos.append(o["tk"])
+    return hechos
+
+
 def main():
     d = cargar()
     chamo = chamomberg()
@@ -211,6 +248,7 @@ def main():
                                            else (ch, "chamomberg") if ch else (None, None))
         o["incremento"] = float(m["incremento"]) if m and m.get("incremento") else None
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
+    cupones = corregir_cupones(ons + soberanos)
 
     # calendario de pagos: ONs, soberanos y provinciales en dólares (los bonos ley NY cobran cable, los de ley argentina MEP)
     pagos = []
@@ -237,7 +275,8 @@ def main():
             "sin_flujos": [o["tk"] for o in ons if not o["flujos"]],
             "flujos_chamomberg": [o["tk"] for o in ons if o.get("fuente_flujos") == "chamomberg"],
             "flujos_manuales": sorted(manuales),
-            "chamomberg_sin_dato": sin_dato}
+            "chamomberg_sin_dato": sin_dato,
+            "cupon_corregido": cupones}
     meta_previa = SALIDA / "meta.json"
     if meta_previa.exists():  # emisores.json lo escribe otro script: no pisar su fecha
         previa = json.loads(meta_previa.read_text())

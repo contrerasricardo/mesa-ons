@@ -1,0 +1,5 @@
+# Cupón confirmado en el suplemento de precio, cuando BYMA publica otro. Manda sobre BYMA: la renta de sus flujos se reescala
+# (BYMA la calcula como VR x cupón / frecuencia) y la TIR y la duration de cierre se recalculan con el precio de cierre.
+# tk = ticker de la línea O (en pesos) como viene en el tablero de BYMA.
+tk,cupon,fuente
+SBC2O,0.0749,"Suplemento de precio Clase 2 (emitida 16-ene-2026, US$ 40,98 M, TNA fija 7,49% trimestral, vto. 16-ene-2029); BYMA publica 74,9%"

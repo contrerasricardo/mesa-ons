@@ -26,10 +26,15 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "docs/data"
 SRC = Path(os.environ.get("MESA_SRC", "/Users/contr/myenv/src"))
-# los emisores que ya publicaron 3T26 usan ese balance (los demás siguen en el corte del notebook)
+# Emisores con 3T26 del formulario resumido de la CNV, sin 9M25 comparable: EBITDA LTM y FCO LTM quedan n/d en la hoja 3T26.
+# Usan los saldos del 3T26 (deuda, caja, PN, activos) y los flujos LTM a junio (2T26). Al cargar el comparable, se borran de acá.
+LTM_A_JUNIO = ("AA2000", "CGC")
+# los emisores que ya publicaron 3T26 usan ese balance (los demás siguen en el corte del notebook); lo que falta en 3T26
+# (p. ej. el LTM de LTM_A_JUNIO) se completa con el corte del notebook
 BAL_3T = ("bal = rc.build_balances_from_master(period=PERIODO)\n",
           "bal = rc.build_balances_from_master(period=PERIODO)\n"
-          "_b3 = rc.build_balances_from_master(period=\"3T26\"); _con3 = list(_b3.index[_b3.ebitda_ltm.notna()])\n"
+          "_b3 = rc.build_balances_from_master(period=\"3T26\")\n"
+          f"_con3 = list(_b3.index[_b3.ebitda_ltm.notna() | (_b3.index.isin({LTM_A_JUNIO!r}) & _b3.total_debt.notna())])\n"
           "bal.loc[_con3] = _b3.loc[_con3].combine_first(bal.loc[_con3])\n")
 # IRSA y Cresud cierran ejercicio en junio y no entran al panel del desk: se leen de la hoja «FY26 jun» del Excel
 # (anual = LTM; en la página el corte va en trimestre calendario: 30-jun = 2T26; la columna «CRESY ind.» da el Merton de Cresud individual) y se suman en memoria al balance, a la base de Merton (IRS y CRESY cotizan en NY) y al cruce de ONs.
@@ -63,6 +68,12 @@ LTM_JUN = ("bases, meta = L.construir_bases()\n",
            "_fl[\"cfo_ai\"] = _fl.cfo - _fl.interest_paid\n"
            "bases[\"LTM\"] = _pd.concat([bases[\"LTM\"][~bases[\"LTM\"].index.isin(_fl.index)], _fl.reindex(columns=bases[\"LTM\"].columns)])\n"
            "meta[\"cortes\"].update({em: \"2T26\" for em in _fl.index})\n"
+           # LTM_A_JUNIO: saldos del 3T26 sobre la base LTM a junio
+           "_d3 = L.DC.leer_fila(\"3T26\", \"Deuda Total\")\n"
+           f"_jn = [e for e in {LTM_A_JUNIO!r} if e in bases[\"LTM\"].index and _pd.notna(_d3.get(e))]\n"
+           "for _k, _et in L.STOCKS.items():\n"
+           "    bases[\"LTM\"].loc[_jn, _k] = L.DC.leer_fila(\"3T26\", _et).reindex(_jn).values\n"
+           "meta[\"cortes\"].update({e: \"3T26\" for e in _jn})\n"
            "E.NOMBRE.update({\"CRESY\": \"Cresud\"})\n")
 PARCHES = {"05_pricing.py": [BAL_3T, FY_JUN],
            "06_comparativo.py": [('d7["x"] = d7["Escalón"]\n', 'd7["x"] = d7["Escalón"].astype(float)\n'), LTM_JUN, BAL_3T, FY_JUN]}
@@ -156,7 +167,7 @@ def armar():
             "puestos": ({"min": limpio(rangos[em][0]), "max": limpio(rangos[em][1]),
                          "base": limpio(c["puestos"].loc[em, "base"])} if em in rangos else None),
             "inestable": em in c["inestables"],
-            "corte": "2T26" if em in jun else "3T26" if em in con3 else str(c["PERIODO"]),
+            "corte": "2T26" if em in jun else ("3T26 · LTM jun" if em in LTM_A_JUNIO else "3T26") if em in con3 else str(c["PERIODO"]),
             "estimados": [ESTIMADOS[em]] if em in ESTIMADOS else [],
         }
     return {"corte": f'{c["PERIODO"]} · 3T26: {", ".join(sorted(con3))}' if con3 else str(c["PERIODO"]), "horizonte_anios": limpio(c["T_HORIZONTE"]),
