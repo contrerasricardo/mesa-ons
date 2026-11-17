@@ -110,6 +110,11 @@ MAESTRO = "/Users/contr/Documents/CEREBRO/Research Corporativos.xlsx"
 ESTIMADOS = {
     "MSU GREEN": "Intereses pagados del 3T26 estimados con los cupones del contrato (el 9M no los separa por trimestre); "
                  "el 2T26 sale como residual para que 1T+2T+3T sume el 9M reportado.",
+    "AA2000": "LTM a septiembre aproximado: la CNV solo publica el formulario resumido del 3T26, sin comparativos. "
+              "EBITDA, FCO, CAPEX e intereses del 9M25 son estimaciones, igual que los costos financieros y los intereses pagados del 3T26.",
+    "CGC": "Intereses pagados del 3T26 estimados por estructura de cupones (rango 10,6-15,5). EBITDA y costos financieros del 3T26 "
+           "también son estimados: el formulario de la CNV no trae D&A y sus costos financieros incluyen la diferencia de cambio. "
+           "Los comparables del 9M25 se llevaron a pesos de dic-25 (TC 1.455).",
 }
 
 
