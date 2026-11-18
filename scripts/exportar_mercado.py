@@ -27,6 +27,7 @@ SALIDA = RAIZ / "docs/data"
 CHAMO = RAIZ / "data/reference/ons-chamomberg.csv"
 MANUALES = RAIZ / "data/reference/flujos-manuales.csv"  # ONs que no están en BYMA ni en chamomberg
 LAMINAS = RAIZ / "data/reference/laminas.csv"  # regla de negociación confirmada en el prospecto: manda sobre chamomberg
+COBRO = RAIZ / "data/reference/cobro.csv"  # moneda de cobro decidida a mano, manda sobre todo lo demás
 CUPONES = RAIZ / "data/reference/cupones.csv"  # cupón confirmado en el suplemento de precio, cuando BYMA publica otro
 URL = "https://tablero.bymaeduca.com.ar/"
 CHAMO_WEB = "https://chamomberg.com/"
@@ -43,8 +44,15 @@ def chamomberg():
     return {r["ticker"]: r for r in csv.DictReader(open(CHAMO))}
 
 
+def cobro_manual():
+    return {r["tk"]: r for r in csv.DictReader(l for l in open(COBRO) if not l.startswith("#"))}
+
+
 def cobra_en(ticker, isin, byma, chamo):
-    # misma regla que CEREBRO/scripts/calculadora_bonos.cobra_en
+    # misma regla que CEREBRO/scripts/calculadora_bonos.cobra_en, salvo data/reference/cobro.csv, que manda
+    m = cobro_manual().get(ticker)
+    if m:
+        return m["cobra"], m["fuente"]
     c = chamo.get(ticker, {}).get("paga_chamomberg")
     if c in ("MEP", "CCL"):
         return c, "chamomberg"

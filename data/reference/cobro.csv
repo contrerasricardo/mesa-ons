@@ -1,0 +1,3 @@
+# Moneda de cobro decidida a mano; manda sobre chamomberg, el ISIN y BYMA. tk = ticker de la línea O del tablero de BYMA.
+tk,cobra,fuente
+PLC4O,MEP,"BYMA; revisar con el prospecto (ley NY pagadera en MEP, a diferencia de PLC5O y PLC7O; decisión del 18-nov-2026)"
