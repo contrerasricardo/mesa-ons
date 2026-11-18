@@ -262,6 +262,8 @@ def main():
         o["lamina"], o["lamina_fuente"] = ((float(m["minimo"]), "prospecto") if m else (byma[o["tk"]], "BYMA") if o["tk"] in byma
                                            else (ch, "chamomberg") if ch else (None, None))
         o["incremento"] = float(m["incremento"]) if m and m.get("incremento") else None
+    # BYMA sigue listando ONs ya vencidas (sin precio de cierre o con VR 0): afuera las que vencieron antes de la liquidación
+    ons = [o for o in ons if not o["vencimiento"] or o["vencimiento"] >= liq]
     ons.sort(key=lambda o: (o["emisor"], o["vencimiento"], o["tk"]))
     cupones = corregir_cupones(ons + soberanos)
 

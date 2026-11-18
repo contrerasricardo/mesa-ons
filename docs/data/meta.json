@@ -9,18 +9,13 @@
   "vivo": "data912.com (lo pide el navegador)"
  },
  "conteos": {
-  "ons.json": 228,
+  "ons.json": 224,
   "pagos.json": 1949,
   "soberanos.json": 36,
   "pesos.json": 43
  },
  "ons_chamomberg": 142,
- "sin_flujos": [
-  "CIC7O",
-  "RZ9BO",
-  "SNABO",
-  "SNSBO"
- ],
+ "sin_flujos": [],
  "flujos_chamomberg": [
   "RC7CO",
   "NZC2O",
@@ -28,7 +23,6 @@
   "BGC5O",
   "BGC6O",
   "NPCFO",
-  "CIC7O",
   "CP37O",
   "CRCJO",
   "DKC1O",
