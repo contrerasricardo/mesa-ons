@@ -133,6 +133,7 @@ ESTIMADOS = {
            "también son estimados: el formulario de la CNV no trae D&A y sus costos financieros incluyen la diferencia de cambio. "
            "Los comparables del 9M25 se llevaron a pesos de dic-25 (TC 1.455).",
     "PAE": "Flujos del 3T26 y comparables del 3T25 llevados a dólares con un TC promedio estimado del trimestre (1.500 en 3T26, 1.310 en 3T25); el 1S25 queda a 1.098,8, la base de la hoja 2T26.",
+    "CNH": "FCO LTM con dos presentaciones del flujo: el 9M-26 sacó de operativas las financiaciones recibidas, así que el FCO y lo que se apoya en él (FCO/EBITDA, FCF, cobertura) no son comparables. El EBITDA LTM negativo es de la fuente.",
     "CRESY": "Costos financieros sin los intereses de arrendamientos; la parte de arrendamientos del trimestre jul-sep 26 es estimada.",
     "CEPU": "Comparables del 9M25 (EBITDA, FCO, CAPEX e intereses pagados) llevados a dólares con un TC promedio ene-sep 2025 estimado (1.168); los intereses pagados salen del consolidado, no del separado que usó el 2T26.",
 }
