@@ -53,6 +53,10 @@ FY_JUN = ("bal = rc.build_balances_from_master(period=PERIODO)\n",
           "_fy = rc.build_balances_from_master(\"/Users/contr/Documents/CEREBRO/Research Corporativos.xlsx\", period=\"FY26 jun\").apply(_pd.to_numeric, errors=\"coerce\")\n"
           "_ind = _fy.loc[\"CRESY ind.\"] if \"CRESY ind.\" in _fy.index else None; _fy = _fy.loc[[\"IRSA\", \"CRESY\"]]\n"
           "_fy[\"ebitda_ltm\"] = _fy.ebitda; _fy[\"cfo_ltm\"] = _fy.cfo\n"
+          # 1T FY27 (30-sep = 3T26): si la columna del 3T26 trae el LTM completo (el Excel lo calcula contra «FY26 jun»), manda sobre el anual
+          "_q3 = rc.build_balances_from_master(period=\"3T26\").apply(_pd.to_numeric, errors=\"coerce\").reindex(_fy.index)\n"
+          f"_fy3 = list(_q3.index[_q3[{LTM_3T!r}].notna().all(axis=1)])\n"
+          "_fy.loc[_fy3] = _q3.loc[_fy3].combine_first(_fy.loc[_fy3])\n"
           "_fy[\"sector\"] = _fy.index.map({\"IRSA\": \"Real Estate\", \"CRESY\": \"Agro\"})\n"
           "bal = _pd.concat([bal[~bal.index.isin(_fy.index)], _fy])\n"
           "_tm.PATRONES.update({\"IRSA\": [\"INVERSIONES Y REPRESENTACIONES\"], \"CRESY\": [\"CRESUD\"]})\n"
@@ -76,6 +80,19 @@ LTM_JUN = ("bases, meta = L.construir_bases()\n",
            "_fl[\"cfo_ai\"] = _fl.cfo - _fl.interest_paid\n"
            "bases[\"LTM\"] = _pd.concat([bases[\"LTM\"][~bases[\"LTM\"].index.isin(_fl.index)], _fl.reindex(columns=bases[\"LTM\"].columns)])\n"
            "meta[\"cortes\"].update({em: \"2T26\" for em in _fl.index})\n"
+           # 1T FY27: LTM = FY26 jun − trimestre jul-sep 25 (fila «9M25 comparable» de su columna) + trimestre jul-sep 26;
+           # EBITDA y FCO LTM vienen hechos del Excel; costos financieros, EBIT y ventas: 3/4 del anual + el trimestre
+           "_q3 = rc.build_balances_from_master(period=\"3T26\").apply(_pd.to_numeric, errors=\"coerce\").reindex(_fl.index)\n"
+           f"_fy3 = list(_q3.index[_q3[{LTM_3T!r}].notna().all(axis=1)])\n"
+           "for _e in _fy3:\n"
+           "    _a, _q, _T = _fl.loc[_e], _q3.loc[_e], bases[\"LTM\"]\n"
+           "    for _k in L.STOCKS:\n"
+           "        if _k in _q.index and _pd.notna(_q[_k]): _T.loc[_e, _k] = _q[_k]\n"
+           "    _ip = _a.interest_paid - _q.interest_paid_comparable + _q.interest_paid\n"
+           "    _T.loc[_e, [\"ebitda\", \"interest_paid\", \"capex\", \"cfo_ai\"]] = [_q.ebitda_ltm, _ip, _a.capex - _q.capex_comparable + _q.capex, _q.cfo_ltm - _ip]\n"
+           "    for _k in (\"financial_costs\", \"ebit\", \"revenue\"):\n"
+           "        if _k in _T.columns and _k in _q.index: _T.loc[_e, _k] = _a.get(_k) * 0.75 + _q[_k]\n"
+           "meta[\"cortes\"].update({em: \"3T26\" for em in _fy3})\n"
            # LTM incompleto al 3T26: flujos LTM a junio y saldos del 3T26
            + REGLA_3T +
            "_jn = [e for e in _jn3 if e in bases[\"LTM\"].index]\n"
@@ -115,6 +132,8 @@ ESTIMADOS = {
     "CGC": "Intereses pagados del 3T26 estimados por estructura de cupones (rango 10,6-15,5). EBITDA y costos financieros del 3T26 "
            "también son estimados: el formulario de la CNV no trae D&A y sus costos financieros incluyen la diferencia de cambio. "
            "Los comparables del 9M25 se llevaron a pesos de dic-25 (TC 1.455).",
+    "PAE": "Flujos del 3T26 y comparables del 3T25 llevados a dólares con un TC promedio estimado del trimestre (1.500 en 3T26, 1.310 en 3T25); el 1S25 queda a 1.098,8, la base de la hoja 2T26.",
+    "CEPU": "Comparables del 9M25 (EBITDA, FCO, CAPEX e intereses pagados) llevados a dólares con un TC promedio ene-sep 2025 estimado (1.168); los intereses pagados salen del consolidado, no del separado que usó el 2T26.",
 }
 
 
@@ -172,7 +191,7 @@ def armar():
     cualidades = [*c["CUALIDADES"], "Capacidad de pago", "Promedio"]
     pricing = ["PD_T", "PD_1y", "TIR Merton", "Spread soberano", "TIR exigida", "TIR mercado", "Dif. mercado - exigida"]
     con3 = set(p["_con3"]) & set(c["_con3"])
-    jun = set(c["_fy"].index)
+    jun = set(c["_fy"].index) - (set(p["_fy3"]) & set(c["_fy3"]))   # IRSA y Cresud: anual a junio salvo que ya tengan el 1T FY27
     emisores = {}
     for em in datos.index:
         fila = datos.loc[em]
