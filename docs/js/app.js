@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122c";
-import { crearMotor } from "./pesos.js?v=20261122c";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122d";
+import { crearMotor } from "./pesos.js?v=20261122d";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1053,6 +1053,86 @@ function resultadoMonedas(qC, qV) {
 // ---------- emisores ----------
 const APROX = t => ` <span class="aprox" title="${esc(t)}">≈</span>`;
 const CORTO = { "Solidez de balance": "Balance", "Cobertura de intereses": "Cobertura", "Caja después de invertir": "Caja post-inv.", "Liquidez": "Liquidez", "Lo que dicen los modelos": "Modelos", "Capacidad de pago": "Cap. de pago", "Promedio": "Promedio" };
+// ---------- crédito por emisor (C11: calidad × duration, nota contra PD, paga de más contra liquidez, techo del país) ----------
+// ons.json trae la razón social; el modelo de Emisores usa códigos cortos
+const CODIGO_EM = [[/^YPF S\.A\./, "YPF"], [/^PAN AMERICAN/, "PAE"], [/^VISTA/, "VIST"], [/^PAMPA/, "PAM"], [/^TRANSPORTADORA DE GAS DEL SUR/, "TGS"],
+  [/^CENTRAL PUERTO/, "CEPU"], [/^TECPETROL/, "TECP"], [/^PLUSPETROL/, "PLC"], [/^TELECOM/, "TEO"], [/^EDENOR/, "EDN"], [/^COMPA.IA GENERAL DE COMBUSTIBLES/, "CGC"],
+  [/^PETROQUIMICA COMODORO/, "PCR"], [/^AEROPUERTOS/, "AA2000"], [/^ARCOR/, "ARCOR"], [/^LOMA NEGRA/, "LOMA"], [/^GENNEIA/, "GENN"],
+  [/^INVERSIONES Y REPRESENTACIONES/, "IRSA"], [/^CRESUD/, "CRESY"], [/^CNH/, "CNH"], [/^MSU GREEN/, "MSU GREEN"], [/^MSU ENERGY/, "MSU"]];
+const codigoEm = n => CODIGO_EM.find(([r]) => r.test(n || ""))?.[1] || null;
+// punta vendedora de la línea en la que cobra (D = MEP, C = cable); sin puntas, el cierre de BYMA
+function cotizar(b) {
+  const linea = b.cobra === "CCL" ? "C" : "D", v = enVivo(b, linea) || deCierre(b, linea);
+  const t = v?.tAsk ?? b.ytm;
+  return { px: v?.ask ?? b.px, t, dm: v?.dm ?? b.dm, vivo: !!v && v.fuente !== "cierre",
+    fl: v?.flujos?.length ? v.flujos : b.calculable ? flujosHoy(b) : [] };
+}
+// tramos de duration de la matriz de C11
+const TRAMOS = [["corto", "Corto (DM ≤ 3)"], ["intermedio", "Intermedio (3 a 6,5)"], ["largo", "Largo (DM > 6,5)"]];
+const tramoDe = dm => dm == null ? null : dm <= 3 ? "corto" : dm <= 6.5 ? "intermedio" : "largo";
+// calidad del emisor (promedio de cualidades de 0 a 100)
+const NIVELES = [["alta", "Calidad alta (≥ 70)"], ["media", "Calidad media (55 a 70)"], ["baja", "Calidad baja (< 55)"]];
+const nivelDe = q => q == null ? null : q >= 70 ? "alta" : q >= 55 ? "media" : "baja";
+// default a un año por nota, matriz de transición de S&P (C11, lámina 9)
+const PD_NOTA = [["AAA", 0, 0], ["AA", 3, 0], ["A", 6, 0], ["BBB", 9, 0.001], ["BB", 12, 0.009], ["B", 15, 0.048], ["CCC/C", 99, 0.274]];
+const pdNota = i => i == null ? null : PD_NOTA.find(([, hasta]) => i <= hasta);
+// techo del país que usa el modelo de Emisores: la nota del soberano en escala global
+const TECHO = ESCALA.indexOf("B-");
+const POCA_LIQUIDEZ = 50000;   // US$ por día sumando todas sus ONs
+const VOL_MIN = 20000;   // US$ por día: debajo de eso la TIR suele ser de un cierre viejo
+
+function fichaCredito(x) {
+  const bonos = E.ons.filter(b => codigoEm(b.emisor) === x.em).map(b => ({ b, ...cotizar(b), c: calif(b) }))
+    .sort((a, b) => (a.b.vencimiento || "").localeCompare(b.b.vencimiento || ""));
+  if (!bonos.length) return `<p class="nota">Sin ONs hard dollar de ${esc(x.em)} en el universo de Balanz.</p>`;
+  const notas = bonos.map(r => r.c.int).filter(i => i != null), nota = notas.length ? Math.max(...notas) : null;
+  const q = x.cualidades?.Promedio, niv = nivelDe(q), z = x.altman?.zona, vol = bonos.reduce((s, r) => s + (r.b.vol || 0), 0);
+  const dif = x.pricing?.["Dif. mercado - exigida"], pdM = x.pricing?.PD_1y, pn = pdNota(nota);
+  const L = [];
+  // posición en la matriz
+  const tramos = [...new Set(bonos.map(r => tramoDe(r.dm)).filter(Boolean))];
+  L.push(`En la matriz calidad × duration: <b>${esc((NIVELES.find(([k]) => k === niv) || [, "sin calidad medida"])[1].toLowerCase())}</b>, con bonos en el tramo ${tramos.map(t => TRAMOS.find(([k]) => k === t)[1].split(" (")[0].toLowerCase()).join(", ") || "—"}.`);
+  // nota contra PD del modelo
+  if (pn) L.push(`Nota internacional ${esc(ESCALA[nota])}: la matriz de S&P le asigna <b>${pct(pn[2], 1)}</b> de default a un año a la categoría ${pn[0]}. El Merton propio da ${pct(pdM)}${pdM != null && pn[2] > 0 && pdM < pn[2] / 5 ? ": el modelo ve a la firma bastante mejor que su nota, que está atada al riesgo del país y no a los números de la empresa" : pdM != null && pdM > pn[2] ? ": el modelo ve a la firma peor que su nota" : ""}.`);
+  else L.push("Sin nota internacional cargada: no se puede comparar con la matriz de S&P.");
+  // techo del país: rising star o caída
+  if (nota != null) {
+    const buena = niv === "alta" || z === "segura";
+    L.push(nota < TECHO ? `Califica por encima del techo del país (${esc(ESCALA[nota])} contra ${ESCALA[TECHO]}): la nota ya le reconoce dólares propios o estructura que no dependen del MLC.`
+      : nota === TECHO ? (buena ? `Está en el techo del país con números de primer escalón: es candidato a subir de nota si sube el soberano. Esa mejora viene del país, no de la empresa.` : `Está en el techo del país y sus números no sostienen por sí solos una nota mayor.`)
+      : (niv !== "baja" && z !== "riesgo" ? `Está por debajo del país (${esc(ESCALA[nota])}) con números que no son los de un crédito débil: es candidato a una mejora propia.` : `Está por debajo del país (${esc(ESCALA[nota])}) y con números débiles: el riesgo es que la nota siga bajando.`));
+  }
+  // paga de más: ¿crédito o liquidez?
+  if (dif != null) L.push(dif > 0 ? (vol < POCA_LIQUIDEZ ? `Paga <b>${pb(dif * 1e4)} pb</b> más de lo que exige el modelo, pero sus ONs suman US$ ${num(vol / 1e3, 0)} k por día: parte puede ser prima por liquidez y no una ineficiencia de crédito.` : `Paga <b>${pb(dif * 1e4)} pb</b> más de lo que exige el modelo, con US$ ${num(vol / 1e3, 0)} k por día de volumen: si el modelo está bien, el mercado lo ve peor que sus números (ineficiencia de crédito, no de liquidez).`)
+    : `Paga <b>${pb(dif * 1e4)} pb</b> respecto de lo que exige el modelo: el mercado lo ve mejor que sus números, o paga escasez de papel.`);
+  if (z === "riesgo") L.push("Z'' en zona de riesgo: mirar los cuatro cocientes antes de leer la TIR como premio.");
+  const filas = bonos.map(r => `<tr><td><span class="tk">${esc(r.b.tk)}</span></td><td>${r.b.isin?.startsWith("AR") ? "ARG" : "NY"}</td><td>${r.b.cobra === "CCL" ? "cable" : "MEP"}</td><td>${fecha(r.b.vencimiento)}</td><td class="n">${num(r.dm)}</td><td>${esc(tramoDe(r.dm) || "—")}</td><td class="n">${TIRV(r.t)}</td><td>${r.c.int == null ? "—" : esc(ESCALA[r.c.int]) + (r.c.heredada ? ' <small class="suave">del emisor</small>' : "")}</td><td class="n">${r.b.vol > 0 ? num(r.b.vol / 1e3, 0) + " k" : "—"}</td></tr>`).join("");
+  return `<h4>Análisis de crédito</h4>${L.map(t => `<p class="nota">${t}</p>`).join("")}
+    <div class="tabla-caja"><table><thead><tr><th>ON</th><th>Ley</th><th>Cobra</th><th>Vence</th><th class="n">DM</th><th>Tramo</th><th class="n">TIR</th><th>Nota</th><th class="n">Vol. diario</th></tr></thead><tbody>${filas}</tbody></table></div>
+    <p class="nota suave">La TIR es al vencimiento: en una ON rescatable sobreestima lo que paga si el emisor la rescata antes (falta el OAS). La matriz de S&P es global y de largo plazo; la nota de un corporativo argentino suele estar limitada por la del país.</p>`;
+}
+
+// matriz calidad × duration de todo el universo de Balanz (C11): filas calidad del emisor, columnas tramo de duration
+function matrizCalidadDuration(d) {
+  const celdas = {};
+  for (const b of E.ons) {
+    const em = codigoEm(b.emisor), x = em && d.emisores[em];
+    if (!x) continue;
+    const r = cotizar(b), niv = nivelDe(x.cualidades?.Promedio), tr = tramoDe(r.dm);
+    if (!niv || !tr || r.t == null || dudosa(r.t) || !(b.vol >= VOL_MIN)) continue;
+    (celdas[niv + tr] ||= []).push({ em, t: r.t });
+  }
+  const celda = c => {
+    if (!c?.length) return `<span class="suave">—</span>`;
+    const ts = c.map(r => r.t).sort((a, b) => a - b), med = ts[Math.floor(ts.length / 2)];
+    const ems = [...new Set(c.map(r => r.em))];
+    return `<b>${pct(med)}</b> <small class="suave">${c.length} ON · ${pct(ts[0])} a ${pct(ts.at(-1))}</small><br><small>${ems.map(esc).join(" · ")}</small>`;
+  };
+  return `<div class="tabla-caja"><table><thead><tr><th>Calidad × duration · TIR mediana</th>${TRAMOS.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead><tbody>${
+    NIVELES.map(([k, t]) => `<tr><td><b>${t}</b></td>${TRAMOS.map(([j]) => `<td>${celda(celdas[k + j])}</td>`).join("")}</tr>`).join("")
+  }</tbody></table></div>`;
+}
+
 async function pEmisores() {
   const el = $("#p-emisores");
   if (!E.emisores || !E.altman) {
@@ -1080,6 +1160,8 @@ async function pEmisores() {
   el.replaceChildren(
     nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más» · <span class="aprox">≈</span> = el número se apoya en un dato estimado (pasa el mouse o abre la ficha). Ojo: los emisores con corte distinto se comparan con balances de trimestres distintos`),
     tabla("emisores", filas, cols, { alClick: fichaEmisor }),
+    nota("Matriz calidad × duration: las dos primeras palancas de la renta fija activa. Las filas son la calidad del emisor (promedio de cualidades) y las columnas el tramo de duration de cada ON hard dollar del universo de Balanz que opera al menos US$ 20 k por día. Bajar de fila es tomar crédito y moverse a la derecha es tomar duration: lo que se cobra por cada uno es la diferencia de TIR entre celdas."),
+    Object.assign(document.createElement("div"), { innerHTML: matrizCalidadDuration(d) }),
     Object.assign(document.createElement("div"), { className: "lectura", innerHTML: d.lectura_html }));
 }
 
@@ -1122,6 +1204,7 @@ function fichaEmisor(x) {
     <div class="datos">${Object.entries(x.cualidades).map(([k, v]) => dato(esc(k), v == null ? "n/d" : num(v, 0))).join("")}</div>
     ${pricing}
     ${fichaAltman(x.altman)}
+    ${fichaCredito(x)}
     <div class="tabla-caja"><table><thead><tr><th>Métrica</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.metricas)}</tbody></table></div>
     ${banderas.length ? `<p class="nota">Ojo: ${banderas.join(" · ")}.</p>` : ""}
     ${(x.estimados || []).map(t => `<p class="nota aviso"><span class="aprox">≈</span> ${esc(t)}</p>`).join("")}</div>`;
@@ -1145,22 +1228,26 @@ async function pCarteras() {
     if (actual !== "carteras") return;
   }
   const d = E.carteras, porTk = new Map(E.ons.map(b => [b.tk, b])), cal = E.emisores.emisores, alt = E.altman.emisores;
-  const DEF = { monto: "100000", estructura: "bullet" };
+  const DEF = { monto: "100000", estructura: "bullet", arrastre: "100", objetivo: "", fecha: "", piso: "" };
   const SECTOR = { "O&G": "Petróleo y gas", Utilities: "Generación y distribución", Telco: "Telecomunicaciones" };
-  const f = filtro("carteras", DEF), monto = +String(f.monto).replace(/\./g, "").replace(",", ".") || 0;
-  const est = f.estructura === "barbell" ? "barbell" : "bullet";
+  const leerMonto = s => +String(s ?? "").replace(/\./g, "").replace(",", ".") || 0, leerTasa = s => +String(s ?? "").replace(",", ".") || 0;
+  const f = filtro("carteras", DEF), monto = leerMonto(f.monto);
+  const est = ["barbell", "escalera"].includes(f.estructura) ? f.estructura : "bullet";
+  const arrastre = String(f.arrastre ?? "").trim() === "" ? 100 : leerTasa(f.arrastre);
   const barra = barraFiltros("carteras", DEF,
-    `<label class="campo">Estructura<select name="estructura"><option value="bullet">Bullet</option><option value="barbell">Barbell</option></select></label>
-     <label class="campo">Monto a simular (US$)<input name="monto" type="text" inputmode="decimal" placeholder="100000"></label>`);
-  // una variante con sus números: punta vendedora de la línea en la que cobra (D = MEP, C = cable); sin puntas, el cierre
+    `<label class="campo">Estructura<select name="estructura"><option value="bullet">Bullet</option><option value="barbell">Barbell</option><option value="escalera">Escalera</option></select></label>
+     <label class="campo">Monto a simular (US$)<input name="monto" type="text" inputmode="decimal" placeholder="100000"></label>
+     <label class="campo" title="Supuesto declarado, no estimado: cuántos pb se mueve el riesgo país por cada 100 pb que se mueve el Tesoro">Arrastre del riesgo país (pb por 100 del Tesoro)<input name="arrastre" type="text" inputmode="decimal" placeholder="100"></label>
+     <label class="campo">Objetivo a cubrir (US$)<input name="objetivo" type="text" inputmode="decimal" placeholder="p. ej. 50000"></label>
+     <label class="campo">Fecha del objetivo<input name="fecha" type="date"></label>
+     <label class="campo" title="Inmunización contingente: la TIR mínima que se quiere asegurar">Tasa piso (%)<input name="piso" type="text" inputmode="decimal" placeholder="opcional"></label>`);
+  // una variante con sus números
   const armar = bonos => {
     const filas = bonos.map(x => {
       const b = porTk.get(x.tk);
       if (!b) return { ...x, falta: true };
-      const linea = b.cobra === "CCL" ? "C" : "D", v = enVivo(b, linea) || deCierre(b, linea);
-      const px = v?.ask ?? b.px, t = v?.tAsk ?? b.ytm, dm = v?.dm ?? b.dm;
-      const fl = v?.flujos?.length ? v.flujos : b.calculable ? flujosHoy(b) : [];
-      return { ...x, b, px, t, dm, vivo: !!v && v.fuente !== "cierre", q: cal[x.em]?.cualidades?.Promedio,
+      const { px, t, dm, fl, vivo } = cotizar(b);
+      return { ...x, b, px, t, dm, fl, vivo, q: cal[x.em]?.cualidades?.Promedio,
         cx: fl.length && t != null && !dudosa(t) ? convexidad(fl, t) : null,
         ley: b.isin?.startsWith("AR") ? "ARG" : "NY", cc: b.cupon != null && px > 0 ? b.cupon * 100 / px : null,
         z: alt[x.em]?.z, zona: alt[x.em]?.zona,
@@ -1177,10 +1264,46 @@ async function pCarteras() {
       sectores: Object.entries(ok.reduce((m, r) => (m[r.sec] = (m[r.sec] || 0) + r.peso / P, m), {})).sort((a, b) => b[1] - a[1]),
       lento: ok.filter(r => r.dias != null).sort((a, b) => b.dias - a.dias)[0] };
   };
+  // escalera: un bono por año de vencimiento con los emisores del perfil, el de mayor TIR de cada año, tope 25% por emisor
+  const ESCALONES = { defensiva: [2027, 2030], conservadora: [2027, 2032], moderada: [2027, 2034], arriesgada: [2027, 2036] };
+  const escalera = c => {
+    const [a, z] = ESCALONES[c.id] || [2027, 2032];
+    const ems = new Set(Object.values(c.variantes).flatMap(v => v.bonos.map(x => x.em)));
+    const cand = E.ons.map(b => ({ b, em: codigoEm(b.emisor), anio: +(b.vencimiento || "").slice(0, 4), ...cotizar(b) }))
+      .filter(r => ems.has(r.em) && r.anio >= a && r.anio <= z && r.fl.length && r.t != null && !dudosa(r.t) && r.b.vol >= VOL_MIN);
+    const anios = [...new Set(cand.map(r => r.anio))].sort(), tope = Math.max(1, Math.floor(anios.length / 4 + 1e-9)), uso = {}, bonos = [];
+    for (const y of anios) {
+      const r = cand.filter(r => r.anio === y && (uso[r.em] || 0) < tope).sort((p, q) => q.t - p.t)[0];
+      if (r) { uso[r.em] = (uso[r.em] || 0) + 1; bonos.push({ tk: r.b.tk, em: r.em }); }
+    }
+    const anios2 = bonos.map(x => porTk.get(x.tk).vencimiento.slice(0, 4));
+    return { bonos: bonos.map(x => ({ ...x, peso: 100 / bonos.length })),
+      lectura: bonos.length ? `Escalera armada sola con los emisores de este perfil: un bono por año de ${anios2[0]} a ${anios2.at(-1)}, el de mayor TIR de cada año entre los que operan al menos US$ 20 k por día, con el mismo peso (${num(100 / bonos.length, 1)}%) y tope de 25% por emisor. Cada año vence un escalón y se reinvierte en el más largo: no apuesta a la forma de la curva y reparte el riesgo de reinversión en el tiempo.` : "No hay bonos para armar la escalera en este rango de años." };
+  };
+  // escenarios: la TIR de una ON es Tesoro + riesgo país + spread propio. El Tesoro mueve al riesgo país (arrastre, supuesto
+  // declarado) y el riesgo país tiene choques propios; en estrés la curva argentina se invierte (el corto sube más).
+  const pendiente = dm => Math.min(1, Math.max(0, ((dm ?? 0) - 1) / 6));   // 0 en DM 1 o menos, 1 en DM 7 o más
+  const ESCENARIOS = [
+    ["Tesoro +100 pb, sin arrastre", () => 0.01],
+    [`Tesoro +100 pb y riesgo país +${num(arrastre, 0)} pb de arrastre`, () => 0.01 + arrastre / 1e4],
+    [`Tesoro −100 pb y riesgo país −${num(arrastre, 0)} pb`, () => -0.01 - arrastre / 1e4],
+    ["Tesoro se empina: corto −50, largo +50", dm => -0.005 + 0.01 * pendiente(dm)],
+    ["Tesoro se aplana: corto +50, largo −50", dm => 0.005 - 0.01 * pendiente(dm)],
+    ["Riesgo país +300 con curva invertida: corto +450, largo +200", dm => 0.045 - 0.025 * pendiente(dm)],
+    ["Riesgo país −200, comprime más el corto: corto −300, largo −150", dm => -0.03 + 0.015 * pendiente(dm)],
+  ];
+  const choque = (x, g) => {
+    let s = 0, w = 0;
+    for (const r of x.filas) {
+      if (r.falta || !r.fl?.length || r.t == null || dudosa(r.t)) continue;
+      s += r.peso * (vp(r.fl, Math.max(-0.5, r.t + g(r.dm))) / vp(r.fl, r.t) - 1); w += r.peso;
+    }
+    return w ? s / w : null;
+  };
   const cols = [
     { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
     { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
-    { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
+    { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, r.peso % 1 ? 1 : 0)}%`, v: r => r.peso },
     { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman del emisor: verde más de 2,6 (zona segura), gris de 1,1 a 2,6, rojo menos de 1,1 (crédito de riesgo)", f: r => zAltman(alt[r.em]), v: r => r.z },
     { k: "sec", t: "Sector", cls: "ocultar-movil", f: r => esc(r.sec || "—"), v: r => r.sec },
     { k: "ing", t: "Ingresos", cls: "ocultar-movil", titulo: "Moneda de los ingresos del emisor (lectura de CEREBRO)", f: r => esc(r.ing || "—"), v: r => r.ing },
@@ -1198,19 +1321,32 @@ async function pCarteras() {
     ...(monto > 0 ? [{ k: "dias", t: "Días", n: 1, titulo: "Días para armar la posición sin pasar del 20% del volumen diario", f: r => r.dias == null ? "—" : num(r.dias, 1), v: r => r.dias }] : []),
     ...(monto > 0 ? [{ k: "vn", t: "VN aprox.", n: 1, titulo: "Valor nominal para el monto simulado, al precio de la tabla, sin comisiones ni lámina", f: r => r.falta || !(r.px > 0) ? "—" : num(monto * r.peso / 100 / (r.px / 100), 0), v: r => r.px > 0 ? r.peso / r.px : null }] : []),
   ];
-  const NOMBRE = { bullet: "Bullet", barbell: "Barbell" };
+  const NOMBRE = { bullet: "Bullet", barbell: "Barbell", escalera: "Escalera" }, EST = ["bullet", "barbell", "escalera"];
   const bloques = d.carteras.map(c => {
-    const V = Object.fromEntries(Object.entries(c.variantes).map(([k, v]) => [k, armar(v.bonos)])), x = V[est];
+    const esca = escalera(c);
+    const V = { ...Object.fromEntries(Object.entries(c.variantes).map(([k, v]) => [k, armar(v.bonos)])), escalera: armar(esca.bonos) }, x = V[est];
+    const lectura = est === "escalera" ? esca.lectura : c.variantes[est].lectura;
     const fila = k => `<tr${k === est ? ' class="ord"' : ""}><td><b>${NOMBRE[k]}</b></td><td class="n">${pct(V[k].t)}</td><td class="n">${num(V[k].dm)}</td><td class="n">${num(V[k].cx, 1)}</td><td class="n">${num(V[k].q, 0)}</td><td class="n">${pct(V[k].corto, 0)}</td></tr>`;
     const dif = V.barbell.t != null && V.bullet.t != null ? (V.barbell.t - V.bullet.t) * 1e4 : null;
+    // escenarios: cambio de precio instantáneo, revaluando los flujos de cada bono
+    const R = ESCENARIOS.map(([t, g]) => [t, Object.fromEntries(EST.map(k => [k, choque(V[k], g)]))]);
+    const gana = o => { const m = EST.filter(k => o[k] != null).sort((a, b) => o[b] - o[a]); return m.length ? NOMBRE[m[0]] : "—"; };
+    const celda = v => v == null ? "—" : `<span class="${v >= 0 ? "pos" : "neg"}">${pct(v)}</span>${monto > 0 ? ` <small class="suave">${v >= 0 ? "+" : "−"}US$ ${num(Math.abs(v) * monto, 0)}</small>` : ""}`;
+    const bb = (i) => R[i][1].bullet != null && R[i][1].barbell != null ? (R[i][1].bullet > R[i][1].barbell ? "bullet" : "barbell") : null;
+    const emp = bb(3), apl = bb(4), est5 = bb(5);
+    const teoria = `Teoría (C11, láminas 34 a 36): el bullet gana si la curva se empina y el barbell si se aplana o en movimientos paralelos grandes, por su convexidad. Con estos bonos: en el empinamiento gana el <b>${emp || "—"}</b>${emp === "bullet" ? ", como dice la teoría" : emp ? ", al revés de la teoría" : ""}; en el aplanamiento gana el <b>${apl || "—"}</b>${apl === "barbell" ? ", como dice la teoría" : apl ? ", al revés de la teoría" : ""}. En los paralelos manda la diferencia de duration (${num(V.bullet.dm)} contra ${num(V.barbell.dm)}) más que la convexidad. El riesgo país no se mueve como el Tesoro: en estrés la curva argentina se invierte (el corto sube más que el largo), que es un aplanamiento brusco, y ahí gana el <b>${est5 || "—"}</b>${est5 === "barbell" ? ": el ala corta sufre, pero el ala larga sube menos de TIR y la convexidad compensa" : est5 ? ": el ala corta del barbell absorbe la suba más fuerte" : ""}; en la compresión pasa lo contrario.`;
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
       <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", zColor(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
-      <p class="nota">${esc(c.variantes[est].lectura)}</p>
+      <p class="nota">${esc(lectura)}</p>
       <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
-      <div class="tabla-caja"><table><thead><tr><th>Bullet vs barbell</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${fila("bullet")}${fila("barbell")}</tbody></table></div>
-      ${dif == null ? "" : `<p class="nota">El barbell rinde <b>${num(Math.abs(dif), 0)} pb ${dif < 0 ? "menos" : "más"}</b> de TIR que el bullet con ${num(V.barbell.dm)} contra ${num(V.bullet.dm)} de duration, a cambio de ${num(V.barbell.cx - V.bullet.cx, 1)} de convexidad ${V.barbell.cx >= V.bullet.cx ? "extra" : "(menos)"}.${V.barbell.q != null && V.bullet.q != null && Math.abs(V.barbell.q - V.bullet.q) >= 2 ? ` La calidad promedio también cambia (${num(V.barbell.q, 0)} contra ${num(V.bullet.q, 0)}): parte de esa diferencia es riesgo de crédito, no solo convexidad.` : ""}</p>`}`;
+      <div class="tabla-caja"><table><thead><tr><th>Estructura</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${EST.map(fila).join("")}</tbody></table></div>
+      ${dif == null ? "" : `<p class="nota">El barbell rinde <b>${num(Math.abs(dif), 0)} pb ${dif < 0 ? "menos" : "más"}</b> de TIR que el bullet con ${num(V.barbell.dm)} contra ${num(V.bullet.dm)} de duration, a cambio de ${num(V.barbell.cx - V.bullet.cx, 1)} de convexidad ${V.barbell.cx >= V.bullet.cx ? "extra" : "(menos)"}.${V.barbell.q != null && V.bullet.q != null && Math.abs(V.barbell.q - V.bullet.q) >= 2 ? ` La calidad promedio también cambia (${num(V.barbell.q, 0)} contra ${num(V.bullet.q, 0)}): parte de esa diferencia es riesgo de crédito, no solo convexidad.` : ""}</p>`}
+      <div class="tabla-caja"><table><thead><tr><th>Escenario de tasas · cambio de precio</th>${EST.map(k => `<th class="n">${NOMBRE[k]}</th>`).join("")}<th>Pierde menos o gana más</th></tr></thead><tbody>${
+        R.map(([t, o]) => `<tr><td>${esc(t)}</td>${EST.map(k => `<td class="n">${celda(o[k])}</td>`).join("")}<td>${gana(o)}</td></tr>`).join("")
+      }</tbody></table></div>
+      <p class="nota">${teoria}</p>`;
     caja.append(tabla("cartera-" + c.id + "-" + est, x.filas, cols));
     return caja;
   });
@@ -1219,8 +1355,44 @@ async function pCarteras() {
     nota(esc(d.estructuras)),
     nota(`${esc(d.lectura_sector || "")} ${esc(d.lectura_ingresos || "")} ${esc(d.liquidez || "")}`),
     nota(esc(d.lectura_altman || "")),
+    nota(`Escenarios de tasas: la TIR de una ON hard dollar es la tasa del Tesoro de Estados Unidos más el riesgo país más el spread propio del emisor. Un movimiento del Tesoro llega dos veces: directo y por el riesgo país, que tiende a ampliarse cuando sube la tasa de Estados Unidos y a comprimirse cuando baja. El arrastre (${num(arrastre, 0)} pb de riesgo país por cada 100 pb del Tesoro) es un supuesto declarado, no una estimación: cámbialo arriba. Cada bono se revalúa con sus flujos a la TIR nueva; el cambio es instantáneo, sin el cupón que se cobra mientras tanto ni cambios en el spread propio del emisor.`),
+    calce(),
     ...bloques,
     nota(`<b>${esc(d.aviso)}</b>`));
+
+  // calce por objetivo (C11): inmunización con dos bonos del primer escalón cuya duration de Macaulay promedio iguala el plazo,
+  // contra el calce de flujos con un solo bono que vence antes de la fecha; con tasa piso, el colchón de la inmunización contingente
+  function calce() {
+    const caja = document.createElement("section");
+    caja.className = "tarjeta";
+    const obj = leerMonto(f.objetivo), H = f.fecha ? dias(E.liq, f.fecha) / 365 : null;
+    if (!(obj > 0) || !(H > 0.25)) {
+      caja.innerHTML = `<h4>Calce por objetivo</h4><p class="nota">Escribe arriba un objetivo en dólares y una fecha (a más de tres meses) para armar la cobertura con ONs de los emisores de las carteras defensiva y conservadora: inmunización (duration igual al plazo), calce de flujos y, con tasa piso, inmunización contingente.</p>`;
+      return caja;
+    }
+    const ems = new Set(d.carteras.filter(c => ["defensiva", "conservadora"].includes(c.id)).flatMap(c => Object.values(c.variantes).flatMap(v => v.bonos.map(x => x.em))));
+    const cand = E.ons.map(b => { const r = cotizar(b); return { b, em: codigoEm(b.emisor), ...r, D: r.fl.length && r.t != null && !dudosa(r.t) && r.px > 0 ? duration(r.fl, r.t).macaulay : null }; })
+      .filter(r => ems.has(r.em) && r.D != null && r.b.vol >= VOL_MIN);
+    // las dos patas de emisores distintos, para no poner todo el objetivo en un solo crédito
+    const A = cand.filter(r => r.D <= H).sort((p, q) => q.D - p.D)[0], B = cand.filter(r => r.D > H && r.em !== A?.em).sort((p, q) => p.D - q.D)[0];
+    const pata = A && B ? [[A, (B.D - H) / (B.D - A.D)], [B, (H - A.D) / (B.D - A.D)]] : [[A || B, 1]];
+    if (!pata[0][0]) { caja.innerHTML = `<h4>Calce por objetivo</h4><p class="nota">No hay ONs del primer escalón con flujos para ese plazo.</p>`; return caja; }
+    const y = pata.reduce((s, [r, w]) => s + w * r.t, 0), D = pata.reduce((s, [r, w]) => s + w * r.D, 0), C = obj / (1 + y) ** H;
+    const filas = pata.map(([r, w]) => `<tr><td><span class="tk">${esc(r.em)}</span> ${esc(r.b.tk)}</td><td>${fecha(r.b.vencimiento)}</td><td class="n">${num(r.D)}</td><td class="n">${TIRV(r.t)}</td><td class="n">${pct(w, 0)}</td><td class="n">${num(C * w, 0)}</td><td class="n">${num(C * w / (r.px / 100), 0)}</td></tr>`).join("");
+    // calce de flujos: el bono del primer escalón que vence más cerca antes de la fecha, cupones guardados sin reinvertir
+    const M = cand.filter(r => r.b.vencimiento && r.b.vencimiento <= f.fecha).sort((p, q) => q.b.vencimiento.localeCompare(p.b.vencimiento))[0];
+    const cobra = M ? M.fl.reduce((s, x) => s + x[1] + x[2] + x[3], 0) : null, vnM = M ? obj / (cobra / 100) : null, costoM = M ? vnM * M.px / 100 : null;
+    const piso = leerTasa(f.piso) / 100;
+    const cont = piso > 0 ? (piso < y ? `<p class="nota"><b>Inmunización contingente</b> con piso de ${pct(piso)}: con ${num(C, 0)} invertidos, el piso asegura ${num(C * (1 + piso) ** H, 0)} al ${fecha(f.fecha)}. Hoy alcanzaría con ${num(C * ((1 + piso) / (1 + y)) ** H, 0)} inmunizados para llegar a ese piso, así que hay un colchón de <b>US$ ${num(C * (1 - ((1 + piso) / (1 + y)) ** H), 0)}</b> (${pct(1 - ((1 + piso) / (1 + y)) ** H, 1)} del capital) para gestionar en forma activa. El gatillo: si el valor de la cartera cae hasta el valor presente del piso a las tasas de ese momento, se pasa a inmunizar lo que queda.</p>`
+      : `<p class="nota aviso">La tasa piso (${pct(piso)}) es igual o mayor que la TIR del calce (${pct(y)}): no hay colchón para gestión activa.</p>`) : "";
+    caja.innerHTML = `<h4>Calce por objetivo · US$ ${num(obj, 0)} al ${fecha(f.fecha)} (${num(H, 1)} años)</h4>
+      <div class="datos">${dato("Hay que invertir hoy", "US$ " + num(C, 0))}${dato("TIR del calce", pct(y))}${dato("Duration de Macaulay", num(D))}${dato("Plazo", num(H, 2) + " años")}</div>
+      <div class="tabla-caja"><table><thead><tr><th>Inmunización</th><th>Vence</th><th class="n">D Macaulay</th><th class="n">TIR</th><th class="n">Peso</th><th class="n">US$</th><th class="n">VN aprox.</th></tr></thead><tbody>${filas}</tbody></table></div>
+      <p class="nota">Inmunizar es igualar la duration de Macaulay al plazo y el valor presente de lo invertido al del objetivo: si las tasas suben, los bonos valen menos pero los cupones se reinvierten a más, y las dos cosas se compensan en la fecha. Solo cubre movimientos paralelos chicos; con cambios de pendiente o del riesgo país queda riesgo, menor cuanto más cerca del plazo estén las dos patas. La duration baja más lento que el plazo, así que hay que rebalancear con cada cupón o cuando cambian mucho las tasas.${pata.length === 1 ? " Solo hay bonos de un lado del plazo: la duration no queda igual al plazo." : ""}</p>
+      ${M ? `<p class="nota"><b>Calce de flujos</b>: ${esc(M.em)} ${esc(M.b.tk)}, que vence el ${fecha(M.b.vencimiento)}, paga ${num(cobra, 1)} por cada 100 de VN entre cupones y capital. Para juntar ${num(obj, 0)} sin reinvertir nada hacen falta ${num(vnM, 0)} de VN, que cuestan hoy <b>US$ ${num(costoM, 0)}</b>, ${num(Math.abs(costoM - C), 0)} ${costoM >= C ? "más" : "menos"} que inmunizar. No tiene riesgo de tasa ni de reinversión; el costo es no cobrar intereses sobre los cupones${M.b.vencimiento < f.fecha ? " y quedar con la caja parada hasta la fecha" : ""}.</p>` : `<p class="nota">Ningún bono del primer escalón vence antes de la fecha: no hay calce de flujos con un solo bono.</p>`}
+      ${cont}`;
+    return caja;
+  }
 }
 
 // ---------- navegación ----------
