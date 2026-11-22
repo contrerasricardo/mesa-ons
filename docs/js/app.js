@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122b";
-import { crearMotor } from "./pesos.js?v=20261122b";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122c";
+import { crearMotor } from "./pesos.js?v=20261122c";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1069,7 +1069,7 @@ async function pEmisores() {
     { k: "sector", t: "Sector", cls: "ocultar-movil", f: x => esc(x.sector), v: x => x.sector },
     { k: "corte", t: "Corte", f: x => x.corte === "3T26" ? `<span class="etq">3T26</span>` : `<span class="suave">${esc(x.corte || d.corte)}</span>`, v: x => x.corte, titulo: "Último trimestre del balance usado" },
     ...nombres.map(q => ({ k: "q:" + q, t: CORTO[q] || q, titulo: q, n: 1, f: x => `<span class="${q === "Promedio" ? "tk" : ""}">${num(x.cualidades[q], 0)}</span>${q === "Promedio" && x.estimados?.length ? APROX("Hay insumos del balance estimados: ver la ficha") : ""}`, v: x => x.cualidades[q] })),
-    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman: más de 2,6 zona segura, de 1,1 a 2,6 gris, menos de 1,1 de riesgo (abre la ficha para ver los cuatro cocientes)", f: x => zAltman(x.altman), v: x => x.altman?.z },
+    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman: verde más de 2,6 (zona segura), gris de 1,1 a 2,6, rojo menos de 1,1 (crédito de riesgo). Abre la ficha para ver los cuatro cocientes", f: x => zAltman(x.altman), v: x => x.altman?.z },
     { k: "exig", t: "TIR exigida", n: 1, f: x => pct(x.pricing["TIR exigida"]) + (x.metricas.estimado ? APROX("Sin acciones que coticen: el valor de los activos del Merton es estimado") : ""), v: x => x.pricing["TIR exigida"], titulo: "Merton + spread soberano" },
     { k: "merc", t: "TIR mercado", n: 1, f: x => pct(x.pricing["TIR mercado"]) + (x.metricas["TIR lejana"] ? APROX(x.metricas["TIR equivalente"] ? "TIR de un bono equivalente, no del emisor" : "TIR de un bono de plazo lejano al horizonte") : ""), v: x => x.pricing["TIR mercado"] },
     { k: "dif", t: "Paga de más", n: 1, f: x => { const v = x.pricing["Dif. mercado - exigida"]; return v == null ? "—" : `<span class="${v > 0 ? "pos" : "neg"}">${pb(v * 1e4)} pb</span>`; }, v: x => x.pricing["Dif. mercado - exigida"], titulo: "TIR de mercado − TIR exigida: positivo = barato" },
@@ -1083,7 +1083,12 @@ async function pEmisores() {
     Object.assign(document.createElement("div"), { className: "lectura", innerHTML: d.lectura_html }));
 }
 
-const zAltman = a => a ? `${num(a.z)} <small class="${a.zona === "riesgo" ? "neg" : a.zona === "segura" ? "pos" : "suave"}">${esc(a.zona)}</small>` : "—";
+// El color del número dice la zona: verde segura, gris, rojo riesgo (cortes de altman.json).
+const zClase = z => z == null ? "" : z > (E.altman?.zonas?.segura ?? 2.6) ? "pos" : z < (E.altman?.zonas?.gris ?? 1.1) ? "neg" : "suave";
+const zNombre = { pos: "zona segura", suave: "zona gris", neg: "zona de riesgo" };
+const zDeZona = { segura: "pos", gris: "suave", riesgo: "neg" };
+const zColor = (z, c = zClase(z)) => z == null ? "—" : `<span class="${c}" title="${zNombre[c]}">${num(z)}</span>`;
+const zAltman = a => a ? zColor(a.z, zDeZona[a.zona] || zClase(a.z)) : "—";
 const ALTMAN = { X1: "Capital de trabajo / activo (× 6,56)", X2: "Resultados no asignados / activo (× 3,26)", X3: "EBIT 12 meses / activo (× 6,72)", X4: "Patrimonio / pasivo total (× 1,05)" };
 function fichaAltman(a) {
   if (!a) return "";
@@ -1176,7 +1181,7 @@ async function pCarteras() {
     { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
     { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
     { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
-    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman del emisor: más de 2,6 zona segura, de 1,1 a 2,6 gris, menos de 1,1 de riesgo", f: r => zAltman(alt[r.em]), v: r => r.z },
+    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman del emisor: verde más de 2,6 (zona segura), gris de 1,1 a 2,6, rojo menos de 1,1 (crédito de riesgo)", f: r => zAltman(alt[r.em]), v: r => r.z },
     { k: "sec", t: "Sector", cls: "ocultar-movil", f: r => esc(r.sec || "—"), v: r => r.sec },
     { k: "ing", t: "Ingresos", cls: "ocultar-movil", titulo: "Moneda de los ingresos del emisor (lectura de CEREBRO)", f: r => esc(r.ing || "—"), v: r => r.ing },
     { k: "q", t: "Calidad", n: 1, titulo: "Promedio de cualidades del emisor (pestaña Emisores)", f: r => num(r.q, 0), v: r => r.q },
@@ -1201,7 +1206,7 @@ async function pCarteras() {
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
-      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", num(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
+      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", zColor(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
       <p class="nota">${esc(c.variantes[est].lectura)}</p>
       <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
       <div class="tabla-caja"><table><thead><tr><th>Bullet vs barbell</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${fila("bullet")}${fila("barbell")}</tbody></table></div>
