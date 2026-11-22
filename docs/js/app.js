@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122g";
-import { crearMotor } from "./pesos.js?v=20261122g";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122h";
+import { crearMotor } from "./pesos.js?v=20261122h";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -476,6 +476,7 @@ function ficha(b) {
   if (!dlg.open) dlg.showModal();
 }
 const dato = (t, v) => `<div class="dato"><span>${t}</span><b>${v}</b></div>`;
+const grupo = (t, filas) => `<div class="grupo"><h5>${t}</h5>${filas.map(([k, v, clave]) => `<div class="fila${clave ? " clave" : ""}"><span>${k}</span><b>${v}</b></div>`).join("")}</div>`;
 const nota = t => Object.assign(document.createElement("p"), { className: "nota", innerHTML: t });
 $("#ficha").addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 
@@ -1605,7 +1606,20 @@ async function pCarteras() {
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
-      <div class="datos">${dato("TIR cable", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tCprom)}">${pct(x.tC)}</span>`)}${dato("TIR MEP", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tMprom)}">${pct(x.tM)}</span>`)}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", zColor(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
+      <div class="resumen">${grupo("Rendimiento", [
+          ["TIR cable", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tCprom)}">${pct(x.tC)}</span>`, 1],
+          ["TIR MEP", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tMprom)}">${pct(x.tM)}</span>`, 1],
+          ["Cupón corriente", pct(x.cc)]])}${grupo("Tasa y liquidez", [
+          ["Duration modificada", num(x.dm)],
+          ["Convexidad", num(x.cx, 1)],
+          ...(x.lento ? [["Posición más lenta", `<span title="Días de volumen para desarmarla">${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} d</span>`]] : [])])}${grupo("Crédito", [
+          ["Calidad promedio", num(x.q, 0)],
+          ["Z'' ponderado", zColor(x.z)],
+          ["En zona de riesgo", pct(x.zriesgo, 0)]])}${grupo("Moneda y ley", [
+          ["Ley NY", pct(x.ny, 0)],
+          ["Cobra en cable", pct(x.cable, 0)],
+          ["Ingresos en dólares", pct(x.dol, 0)],
+          ["Ingresos en pesos", pct(x.pesos, 0)]])}</div>
       <p class="nota">${esc(lectura)}</p>
       <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
       <div class="tabla-caja"><table><thead><tr><th>Estructura</th><th class="n">TIR cable</th><th class="n">TIR MEP</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${EST.map(fila).join("")}</tbody></table></div>
