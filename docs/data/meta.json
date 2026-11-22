@@ -15,11 +15,7 @@
   "pesos.json": 44
  },
  "ons_chamomberg": 140,
- "sin_flujos": [
-  "BPCUO",
-  "LR7BO",
-  "SNSDO"
- ],
+ "sin_flujos": [],
  "flujos_chamomberg": [
   "RC7CO",
   "NZC2O",
@@ -55,5 +51,10 @@
   "corte": "2T26 / 3T26",
   "generado": "2026-11-19T03:03:18+00:00",
   "n": 21
- }
+ },
+ "flujos_cronograma": [
+  "BPCUO",
+  "LR7BO",
+  "SNSDO"
+ ]
 }

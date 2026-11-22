@@ -121,8 +121,27 @@ def redondear(flujos):
     return [[d, round(c, 6), round(r, 6), round(a, 6)] for d, c, r, a in flujos]
 
 
-def instrumento(r, i):
-    """Campos comunes a todos los bonos."""
+def flujos_cronograma(r, liq):
+    """Flujos desde el cronograma de la ficha del tablero (`amo` y `ren`: fecha y monto por 100 de VN original), para los
+    bonos que el tablero no calcula (sin entrada en calc.ins): suele pasar con bullets a punto de vencer."""
+    if not liq or not (r.get("amo") or r.get("ren")):
+        return []
+    d0, por = dt.date.fromisoformat(liq), {}
+    for clave, pos in (("amo", 0), ("ren", 1)):
+        for f, v in r.get(clave) or []:
+            dias = (dt.date.fromisoformat(f) - d0).days
+            if dias > 0 and v:
+                por.setdefault(dias, [0.0, 0.0])[pos] += float(v)
+    return redondear([[d, c, x, 0.0] for d, (c, x) in sorted(por.items())])
+
+
+def instrumento(r, i, liq=None):
+    """Campos comunes a todos los bonos. Sin cálculo del tablero, flujos del cronograma de la ficha."""
+    if not i and (fl := flujos_cronograma(r, liq)):
+        o = instrumento(r, None)
+        ytm, dm = tir_duration(fl, o["cierre"]["px"])
+        o["cierre"] |= {"ytm": ytm, "dm": dm}
+        return o | {"tipo_flujos": "fix", "liq": liq, "flujos": fl, "flujos_de": "cronograma"}
     return {
         "tk": r["tk"], "emisor": r["em"], "clase": r["de"], "isin": r.get("isin") or "",
         "ley": "ARG" if (r.get("isin") or "AR").startswith("AR") else "NY",
@@ -187,7 +206,7 @@ def main():
     for r in d["on"]["rows"]:
         if r["seg"] != "hd":
             continue
-        o = instrumento(r, ins.get(r["tk"]))
+        o = instrumento(r, ins.get(r["tk"]), liq)
         cobro, fuente = cobra_en(r["tk"], o["isin"], r.get("mp"), chamo)
         o |= {"sector": r.get("sec"), "cobra": cobro, "fuente_cobro": fuente, "cobra_byma": r.get("mp"),
               "chamomberg": r["tk"] in chamo,
@@ -254,7 +273,7 @@ def main():
     tp = d["tp"]["rows"]
     # líneas en dólares (D = MEP, C = cable) con el nombre que les da BYMA (`adtve`: [pesos, D, C]); varias provinciales
     # no siguen la regla del ticker (BDC33 → BC33D, CO24D → DCO24)
-    soberanos = [instrumento(r, ins.get(r["tk"])) | {"segmento": r["seg"], "lineas_byma": lineas_byma(r)}
+    soberanos = [instrumento(r, ins.get(r["tk"]), d["tp"]["fecha_liq"]) | {"segmento": r["seg"], "lineas_byma": lineas_byma(r)}
                  for r in tp if r["me"] == "USD" and r["seg"] in ("sob", "pro")]
     byma = denominaciones_byma([o["tk"] for o in ons + soberanos])
     for o in ons + soberanos:
@@ -290,6 +309,7 @@ def main():
             "conteos": {k: len(v) for k, v in archivos.items()},
             "ons_chamomberg": sum(o["chamomberg"] for o in ons),
             "sin_flujos": [o["tk"] for o in ons if not o["flujos"]],
+            "flujos_cronograma": [o["tk"] for o in ons + soberanos if o.get("flujos_de") == "cronograma"],
             "flujos_chamomberg": [o["tk"] for o in ons if o.get("fuente_flujos") == "chamomberg"],
             "flujos_manuales": sorted(manuales),
             "chamomberg_sin_dato": sin_dato,
