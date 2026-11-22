@@ -1,0 +1,64 @@
+{
+  "armado": "2026-11-21",
+  "base": "Calidad del emisor: modelo de Emisores de STP (corte 3T26) y ranking de crédito de CEREBRO v2. Precios: punta vendedora en vivo; sin puntas, cierre de BYMA.",
+  "reglas": "Solo hard dollar (MEP o cable), solo ONs del universo de Balanz, ley según el ISIN. Tope de 25% por emisor. Primero la calidad del emisor, después el bono.",
+  "aviso": "Carteras modelo de referencia. Describen a qué te expone cada perfil; no son una recomendación personal. Toda operación queda sujeta a la autorización del cliente y a su perfil de riesgo.",
+  "carteras": [
+    {
+      "id": "defensiva",
+      "nombre": "Defensiva",
+      "objetivo": "Preservar los dólares con vencimientos cortos",
+      "lectura": "Solo emisores del primer escalón de calidad y vencimientos de 2027 a 2029. Poca sensibilidad a la tasa: si el riesgo país sube 100 pb el precio se mueve cerca de 1%. Se cobra en MEP y en cable, toda ley argentina.",
+      "bonos": [
+        { "tk": "YM38O", "em": "YPF", "peso": 25 },
+        { "tk": "PN38O", "em": "PAE", "peso": 25 },
+        { "tk": "VSCPO", "em": "VIST", "peso": 25 },
+        { "tk": "MGCTO", "em": "PAM", "peso": 25 }
+      ]
+    },
+    {
+      "id": "conservadora",
+      "nombre": "Conservadora",
+      "objetivo": "Más renta sin bajar la calidad del emisor",
+      "lectura": "Los mismos emisores del primer escalón más TGS y Central Puerto, con plazos de 2029 a 2032. Mitad ley argentina y mitad ley Nueva York, casi todo cobra en cable. La duration sube a la zona de 3 años.",
+      "bonos": [
+        { "tk": "TSC3O", "em": "TGS", "peso": 20 },
+        { "tk": "YM39O", "em": "YPF", "peso": 20 },
+        { "tk": "PNXCO", "em": "PAE", "peso": 15 },
+        { "tk": "MGCMO", "em": "PAM", "peso": 15 },
+        { "tk": "VSCRO", "em": "VIST", "peso": 15 },
+        { "tk": "NPCCO", "em": "CEPU", "peso": 15 }
+      ]
+    },
+    {
+      "id": "moderada",
+      "nombre": "Moderada",
+      "objetivo": "Renta de 9% con plazos largos y algo de segundo escalón",
+      "lectura": "Bonos largos de ley Nueva York de los mejores emisores, más Telecom, Tecpetrol y Pluspetrol del segundo escalón. La duration ronda 4 a 5 años: es la cartera que más gana si baja el riesgo país y la que más sufre si sube.",
+      "bonos": [
+        { "tk": "YM34O", "em": "YPF", "peso": 15 },
+        { "tk": "TSC4O", "em": "TGS", "peso": 15 },
+        { "tk": "VSCVO", "em": "VIST", "peso": 15 },
+        { "tk": "MGCOO", "em": "PAM", "peso": 10 },
+        { "tk": "TLCPO", "em": "TEO", "peso": 15 },
+        { "tk": "TTCAO", "em": "TECP", "peso": 15 },
+        { "tk": "PLC5O", "em": "PLC", "peso": 15 }
+      ]
+    },
+    {
+      "id": "agresiva",
+      "nombre": "Agresiva",
+      "objetivo": "Buscar la TIR más alta aceptando emisores más débiles",
+      "lectura": "Seis de cada diez dólares van a Edenor, CGC y PCR, los emisores que el modelo ve pagando más de lo que exige su riesgo, con balances más cargados. El resto ancla en YPF, Vista y Telecom. Es la que más rinde y la que más depende de que esos tres sigan refinanciando.",
+      "bonos": [
+        { "tk": "YM44O", "em": "YPF", "peso": 15 },
+        { "tk": "VSCXO", "em": "VIST", "peso": 10 },
+        { "tk": "TLCPO", "em": "TEO", "peso": 15 },
+        { "tk": "CP38O", "em": "CGC", "peso": 20 },
+        { "tk": "LQC1O", "em": "PCR", "peso": 15 },
+        { "tk": "DNCAO", "em": "EDN", "peso": 15 },
+        { "tk": "DNC7O", "em": "EDN", "peso": 10 }
+      ]
+    }
+  ]
+}
