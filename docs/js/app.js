@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261121e";
-import { crearMotor } from "./pesos.js?v=20261121e";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122b";
+import { crearMotor } from "./pesos.js?v=20261122b";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1055,19 +1055,21 @@ const APROX = t => ` <span class="aprox" title="${esc(t)}">≈</span>`;
 const CORTO = { "Solidez de balance": "Balance", "Cobertura de intereses": "Cobertura", "Caja después de invertir": "Caja post-inv.", "Liquidez": "Liquidez", "Lo que dicen los modelos": "Modelos", "Capacidad de pago": "Cap. de pago", "Promedio": "Promedio" };
 async function pEmisores() {
   const el = $("#p-emisores");
-  if (!E.emisores) {
+  if (!E.emisores || !E.altman) {
     el.innerHTML = `<p class="nota">Cargando emisores…</p>`;
-    try { E.emisores = await fetch("data/emisores.json", { cache: "no-cache" }).then(r => r.json()); }
-    catch { el.innerHTML = `<p class="nota neg">No se pudo cargar data/emisores.json.</p>`; return; }
+    const leer = n => fetch(`data/${n}.json`, { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error(n); return r.json(); });
+    try { [E.emisores, E.altman] = await Promise.all([E.emisores || leer("emisores"), E.altman || leer("altman")]); }
+    catch (e) { el.innerHTML = `<p class="nota neg">No se pudo cargar data/${esc(e.message)}.json.</p>`; return; }
     if (actual !== "emisores") return;
   }
-  const d = E.emisores, filas = Object.entries(d.emisores).map(([em, x]) => ({ em, ...x }));
+  const d = E.emisores, filas = Object.entries(d.emisores).map(([em, x]) => ({ em, ...x, altman: E.altman.emisores[em] }));
   const nombres = Object.keys(filas[0]?.cualidades || {});
   const cols = [
     { k: "em", t: "Emisor", f: x => `<span class="tk">${esc(x.em)}</span>${x.inestable ? ' <span class="aviso" title="El orden cambia mucho al sacar una cualidad">⚠</span>' : ""}`, v: x => x.em },
     { k: "sector", t: "Sector", cls: "ocultar-movil", f: x => esc(x.sector), v: x => x.sector },
     { k: "corte", t: "Corte", f: x => x.corte === "3T26" ? `<span class="etq">3T26</span>` : `<span class="suave">${esc(x.corte || d.corte)}</span>`, v: x => x.corte, titulo: "Último trimestre del balance usado" },
     ...nombres.map(q => ({ k: "q:" + q, t: CORTO[q] || q, titulo: q, n: 1, f: x => `<span class="${q === "Promedio" ? "tk" : ""}">${num(x.cualidades[q], 0)}</span>${q === "Promedio" && x.estimados?.length ? APROX("Hay insumos del balance estimados: ver la ficha") : ""}`, v: x => x.cualidades[q] })),
+    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman: más de 2,6 zona segura, de 1,1 a 2,6 gris, menos de 1,1 de riesgo (abre la ficha para ver los cuatro cocientes)", f: x => zAltman(x.altman), v: x => x.altman?.z },
     { k: "exig", t: "TIR exigida", n: 1, f: x => pct(x.pricing["TIR exigida"]) + (x.metricas.estimado ? APROX("Sin acciones que coticen: el valor de los activos del Merton es estimado") : ""), v: x => x.pricing["TIR exigida"], titulo: "Merton + spread soberano" },
     { k: "merc", t: "TIR mercado", n: 1, f: x => pct(x.pricing["TIR mercado"]) + (x.metricas["TIR lejana"] ? APROX(x.metricas["TIR equivalente"] ? "TIR de un bono equivalente, no del emisor" : "TIR de un bono de plazo lejano al horizonte") : ""), v: x => x.pricing["TIR mercado"] },
     { k: "dif", t: "Paga de más", n: 1, f: x => { const v = x.pricing["Dif. mercado - exigida"]; return v == null ? "—" : `<span class="${v > 0 ? "pos" : "neg"}">${pb(v * 1e4)} pb</span>`; }, v: x => x.pricing["Dif. mercado - exigida"], titulo: "TIR de mercado − TIR exigida: positivo = barato" },
@@ -1079,6 +1081,16 @@ async function pEmisores() {
     nota(`${filas.length} emisores · corte ${esc(d.corte)} · horizonte ${num(d.horizonte_anios, 0)} años · orden por calidad (promedio de cualidades), valor en «paga de más» · <span class="aprox">≈</span> = el número se apoya en un dato estimado (pasa el mouse o abre la ficha). Ojo: los emisores con corte distinto se comparan con balances de trimestres distintos`),
     tabla("emisores", filas, cols, { alClick: fichaEmisor }),
     Object.assign(document.createElement("div"), { className: "lectura", innerHTML: d.lectura_html }));
+}
+
+const zAltman = a => a ? `${num(a.z)} <small class="${a.zona === "riesgo" ? "neg" : a.zona === "segura" ? "pos" : "suave"}">${esc(a.zona)}</small>` : "—";
+const ALTMAN = { X1: "Capital de trabajo / activo (× 6,56)", X2: "Resultados no asignados / activo (× 3,26)", X3: "EBIT 12 meses / activo (× 6,72)", X4: "Patrimonio / pasivo total (× 1,05)" };
+function fichaAltman(a) {
+  if (!a) return "";
+  const pesos = { X1: 6.56, X2: 3.26, X3: 6.72, X4: 1.05 };
+  return `<div class="tabla-caja"><table><thead><tr><th>Z'' de Altman · ${zAltman(a)}</th><th class="n">Cociente</th><th class="n">Aporte</th></tr></thead><tbody>${
+    Object.entries(ALTMAN).map(([k, t]) => `<tr><td>${esc(t)}</td><td class="n">${num(a[k], 3)}</td><td class="n">${num(a[k] * pesos[k], 2)}</td></tr>`).join("")
+  }</tbody></table></div><p class="nota">Balance ${esc(a.corte)}. EBIT de 12 meses aproximado: EBITDA de 12 meses menos amortizaciones anualizadas. En estados argentinos los resultados no asignados pasan a reservas en cada asamblea, así que X2 sale corto y el Z'' es conservador.</p>`;
 }
 
 // banderas internas del modelo: van como nota, no como fila
@@ -1104,6 +1116,7 @@ function fichaEmisor(x) {
     ${aviso}
     <div class="datos">${Object.entries(x.cualidades).map(([k, v]) => dato(esc(k), v == null ? "n/d" : num(v, 0))).join("")}</div>
     ${pricing}
+    ${fichaAltman(x.altman)}
     <div class="tabla-caja"><table><thead><tr><th>Métrica</th><th class="n">Valor</th></tr></thead><tbody>${fila(x.metricas)}</tbody></table></div>
     ${banderas.length ? `<p class="nota">Ojo: ${banderas.join(" · ")}.</p>` : ""}
     ${(x.estimados || []).map(t => `<p class="nota aviso"><span class="aprox">≈</span> ${esc(t)}</p>`).join("")}</div>`;
@@ -1118,15 +1131,15 @@ function fichaEmisor(x) {
 const global = s => (s || "").split("/").map(x => x.trim()).filter(x => x && !/^A/.test(x)).join(" / ");
 async function pCarteras() {
   const el = $("#p-carteras");
-  if (!E.carteras || !E.emisores) {
+  if (!E.carteras || !E.emisores || !E.altman) {
     el.innerHTML = `<p class="nota">Cargando carteras…</p>`;
     try {
       const leer = n => fetch(`data/${n}.json`, { cache: "no-cache" }).then(r => { if (!r.ok) throw new Error(n); return r.json(); });
-      [E.carteras, E.emisores] = await Promise.all([E.carteras || leer("carteras"), E.emisores || leer("emisores")]);
+      [E.carteras, E.emisores, E.altman] = await Promise.all([E.carteras || leer("carteras"), E.emisores || leer("emisores"), E.altman || leer("altman")]);
     } catch (e) { el.innerHTML = `<p class="nota neg">No se pudo cargar data/${esc(e.message)}.json.</p>`; return; }
     if (actual !== "carteras") return;
   }
-  const d = E.carteras, porTk = new Map(E.ons.map(b => [b.tk, b])), cal = E.emisores.emisores;
+  const d = E.carteras, porTk = new Map(E.ons.map(b => [b.tk, b])), cal = E.emisores.emisores, alt = E.altman.emisores;
   const DEF = { monto: "100000", estructura: "bullet" };
   const SECTOR = { "O&G": "Petróleo y gas", Utilities: "Generación y distribución", Telco: "Telecomunicaciones" };
   const f = filtro("carteras", DEF), monto = +String(f.monto).replace(/\./g, "").replace(",", ".") || 0;
@@ -1145,13 +1158,15 @@ async function pCarteras() {
       return { ...x, b, px, t, dm, vivo: !!v && v.fuente !== "cierre", q: cal[x.em]?.cualidades?.Promedio,
         cx: fl.length && t != null && !dudosa(t) ? convexidad(fl, t) : null,
         ley: b.isin?.startsWith("AR") ? "ARG" : "NY", cc: b.cupon != null && px > 0 ? b.cupon * 100 / px : null,
+        z: alt[x.em]?.z, zona: alt[x.em]?.zona,
         sec: SECTOR[cal[x.em]?.sector] || cal[x.em]?.sector || "—", ing: d.ingresos?.[x.em] || "—",
         dias: monto > 0 && b.vol > 0 ? monto * x.peso / 100 / (0.2 * b.vol) : null };
     });
     const ok = filas.filter(r => !r.falta), P = ok.reduce((s, r) => s + r.peso, 0) || 1;
     const prom = k => { const z = ok.filter(r => r[k] != null && isFinite(r[k]) && !(k === "t" && dudosa(r[k]))), w = z.reduce((s, r) => s + r.peso, 0); return w ? z.reduce((s, r) => s + r.peso * r[k], 0) / w : null; };
     const parte = g => ok.filter(g).reduce((s, r) => s + r.peso, 0) / P;
-    return { filas, t: prom("t"), dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"),
+    return { filas, t: prom("t"), dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"), z: prom("z"),
+      zriesgo: parte(r => r.zona === "riesgo"),
       ny: parte(r => r.ley === "NY"), cable: parte(r => r.b.cobra === "CCL"), corto: parte(r => r.dm != null && r.dm < 1.5),
       dol: parte(r => r.ing === "dólares"), pesos: parte(r => r.ing === "pesos"),
       sectores: Object.entries(ok.reduce((m, r) => (m[r.sec] = (m[r.sec] || 0) + r.peso / P, m), {})).sort((a, b) => b[1] - a[1]),
@@ -1161,6 +1176,7 @@ async function pCarteras() {
     { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
     { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
     { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
+    { k: "z", t: "Z''", n: 1, titulo: "Z'' de Altman del emisor: más de 2,6 zona segura, de 1,1 a 2,6 gris, menos de 1,1 de riesgo", f: r => zAltman(alt[r.em]), v: r => r.z },
     { k: "sec", t: "Sector", cls: "ocultar-movil", f: r => esc(r.sec || "—"), v: r => r.sec },
     { k: "ing", t: "Ingresos", cls: "ocultar-movil", titulo: "Moneda de los ingresos del emisor (lectura de CEREBRO)", f: r => esc(r.ing || "—"), v: r => r.ing },
     { k: "q", t: "Calidad", n: 1, titulo: "Promedio de cualidades del emisor (pestaña Emisores)", f: r => num(r.q, 0), v: r => r.q },
@@ -1185,7 +1201,7 @@ async function pCarteras() {
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
-      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
+      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", num(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
       <p class="nota">${esc(c.variantes[est].lectura)}</p>
       <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
       <div class="tabla-caja"><table><thead><tr><th>Bullet vs barbell</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${fila("bullet")}${fila("barbell")}</tbody></table></div>
@@ -1197,6 +1213,7 @@ async function pCarteras() {
     nota(`Armadas el ${fecha(d.armado)} · ${esc(d.reglas)} ${esc(d.base)} La TIR ponderada es el promedio por peso de las TIR de cada bono, una aproximación a la TIR de la cartera.`),
     nota(esc(d.estructuras)),
     nota(`${esc(d.lectura_sector || "")} ${esc(d.lectura_ingresos || "")} ${esc(d.liquidez || "")}`),
+    nota(esc(d.lectura_altman || "")),
     ...bloques,
     nota(`<b>${esc(d.aviso)}</b>`));
 }
