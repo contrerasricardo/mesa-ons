@@ -35,6 +35,12 @@ export function duration(flujos, y) {
   return { macaulay: mac, modificada: mac / (1 + y) };
 }
 
+// Convexidad (en años²) a la TIR efectiva y: Σ t(t+1)·CF/(1+y)^(t+2) / P.
+export function convexidad(flujos, y) {
+  const p = vp(flujos, y);
+  return flujos.reduce((s, f) => { const t = f[0] / 365; return s + t * (t + 1) * total(f) / (1 + y) ** (t + 2); }, 0) / p;
+}
+
 // data912 cotiza a 24 hs: liquida el próximo día hábil, con los feriados de data/reference/supuestos-pesos.json (los mismos del
 // motor de pesos). Un día no hábil opera el hábil siguiente y liquida el posterior.
 let FERIADOS = new Set();

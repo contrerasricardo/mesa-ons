@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261121b";
-import { crearMotor } from "./pesos.js?v=20261121b";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261121d";
+import { crearMotor } from "./pesos.js?v=20261121d";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1127,46 +1127,64 @@ async function pCarteras() {
     if (actual !== "carteras") return;
   }
   const d = E.carteras, porTk = new Map(E.ons.map(b => [b.tk, b])), cal = E.emisores.emisores;
-  const f = filtro("carteras", { monto: "100000" }), monto = +String(f.monto).replace(/\./g, "").replace(",", ".") || 0;
-  const barra = barraFiltros("carteras", { monto: "100000" },
-    `<label class="campo">Monto a simular (US$)<input name="monto" type="text" inputmode="decimal" placeholder="100000"></label>`);
-  const bloques = d.carteras.map(c => {
-    const filas = c.bonos.map(x => {
+  const DEF = { monto: "100000", estructura: "bullet" };
+  const f = filtro("carteras", DEF), monto = +String(f.monto).replace(/\./g, "").replace(",", ".") || 0;
+  const est = f.estructura === "barbell" ? "barbell" : "bullet";
+  const barra = barraFiltros("carteras", DEF,
+    `<label class="campo">Estructura<select name="estructura"><option value="bullet">Bullet</option><option value="barbell">Barbell</option></select></label>
+     <label class="campo">Monto a simular (US$)<input name="monto" type="text" inputmode="decimal" placeholder="100000"></label>`);
+  // una variante con sus números: punta vendedora de la línea en la que cobra (D = MEP, C = cable); sin puntas, el cierre
+  const armar = bonos => {
+    const filas = bonos.map(x => {
       const b = porTk.get(x.tk);
       if (!b) return { ...x, falta: true };
       const linea = b.cobra === "CCL" ? "C" : "D", v = enVivo(b, linea) || deCierre(b, linea);
       const px = v?.ask ?? b.px, t = v?.tAsk ?? b.ytm, dm = v?.dm ?? b.dm;
+      const fl = v?.flujos?.length ? v.flujos : b.calculable ? flujosHoy(b) : [];
       return { ...x, b, px, t, dm, vivo: !!v && v.fuente !== "cierre", q: cal[x.em]?.cualidades?.Promedio,
+        cx: fl.length && t != null && !dudosa(t) ? convexidad(fl, t) : null,
         ley: b.isin?.startsWith("AR") ? "ARG" : "NY", cc: b.cupon != null && px > 0 ? b.cupon * 100 / px : null };
     });
     const ok = filas.filter(r => !r.falta), P = ok.reduce((s, r) => s + r.peso, 0) || 1;
-    const prom = k => { const z = ok.filter(r => r[k] != null && isFinite(r[k])), w = z.reduce((s, r) => s + r.peso, 0); return w ? z.reduce((s, r) => s + r.peso * r[k], 0) / w : null; };
+    const prom = k => { const z = ok.filter(r => r[k] != null && isFinite(r[k]) && !(k === "t" && dudosa(r[k]))), w = z.reduce((s, r) => s + r.peso, 0); return w ? z.reduce((s, r) => s + r.peso * r[k], 0) / w : null; };
     const parte = g => ok.filter(g).reduce((s, r) => s + r.peso, 0) / P;
-    const cols = [
-      { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
-      { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
-      { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
-      { k: "q", t: "Calidad", n: 1, titulo: "Promedio de cualidades del emisor (pestaña Emisores)", f: r => num(r.q, 0), v: r => r.q },
-      { k: "ley", t: "Ley", f: r => r.falta ? "—" : esc(r.ley), v: r => r.ley },
-      { k: "cobra", t: "Cobra", f: r => r.falta ? "—" : esc(r.b.cobra === "CCL" ? "cable" : "MEP"), v: r => r.b?.cobra },
-      { k: "vto", t: "Vence", cls: "ocultar-movil", f: r => r.falta ? "—" : fecha(r.b.vencimiento), v: r => r.b?.vencimiento },
-      { k: "px", t: "Precio", n: 1, f: r => r.falta ? "—" : `${num(r.px)}${r.vivo ? "" : ' <small class="suave">cierre</small>'}`, v: r => r.px },
-      { k: "t", t: "TIR", n: 1, f: r => r.falta ? "—" : TIRV(r.t), v: r => r.t },
-      { k: "dm", t: "DM", n: 1, f: r => r.falta ? "—" : num(r.dm), v: r => r.dm },
-      { k: "cc", t: "Cupón corr.", n: 1, cls: "ocultar-movil", titulo: "Cupón anual sobre el precio", f: r => pct(r.cc), v: r => r.cc },
-      { k: "cal", t: "Rating", cls: "ocultar-movil", titulo: "Solo escala global (la escala local AA o AAA no se muestra)", f: r => esc(global(r.b?.calificacion) || "—"), v: r => global(r.b?.calificacion) },
-      ...(monto > 0 ? [{ k: "vn", t: "VN aprox.", n: 1, titulo: "Valor nominal para el monto simulado, al precio de la tabla, sin comisiones ni lámina", f: r => r.falta || !(r.px > 0) ? "—" : num(monto * r.peso / 100 / (r.px / 100), 0), v: r => r.px > 0 ? r.peso / r.px : null }] : []),
-    ];
+    return { filas, t: prom("t"), dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"),
+      ny: parte(r => r.ley === "NY"), cable: parte(r => r.b.cobra === "CCL"), corto: parte(r => r.dm != null && r.dm < 1.5) };
+  };
+  const cols = [
+    { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
+    { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
+    { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
+    { k: "q", t: "Calidad", n: 1, titulo: "Promedio de cualidades del emisor (pestaña Emisores)", f: r => num(r.q, 0), v: r => r.q },
+    { k: "ley", t: "Ley", f: r => r.falta ? "—" : esc(r.ley), v: r => r.ley },
+    { k: "cobra", t: "Cobra", f: r => r.falta ? "—" : esc(r.b.cobra === "CCL" ? "cable" : "MEP"), v: r => r.b?.cobra },
+    { k: "vto", t: "Vence", cls: "ocultar-movil", f: r => r.falta ? "—" : fecha(r.b.vencimiento), v: r => r.b?.vencimiento },
+    { k: "px", t: "Precio", n: 1, f: r => r.falta ? "—" : `${num(r.px)}${r.vivo ? "" : ' <small class="suave">cierre</small>'}`, v: r => r.px },
+    { k: "t", t: "TIR", n: 1, f: r => r.falta ? "—" : TIRV(r.t), v: r => r.t },
+    { k: "dm", t: "DM", n: 1, f: r => r.falta ? "—" : num(r.dm), v: r => r.dm },
+    { k: "cx", t: "Convex.", n: 1, cls: "ocultar-movil", titulo: "Convexidad en años²", f: r => num(r.cx, 1), v: r => r.cx },
+    { k: "cc", t: "Cupón corr.", n: 1, cls: "ocultar-movil", titulo: "Cupón anual sobre el precio", f: r => pct(r.cc), v: r => r.cc },
+    { k: "cal", t: "Rating", cls: "ocultar-movil", titulo: "Solo escala global (la escala local AA o AAA no se muestra)", f: r => esc(global(r.b?.calificacion) || "—"), v: r => global(r.b?.calificacion) },
+    ...(monto > 0 ? [{ k: "vn", t: "VN aprox.", n: 1, titulo: "Valor nominal para el monto simulado, al precio de la tabla, sin comisiones ni lámina", f: r => r.falta || !(r.px > 0) ? "—" : num(monto * r.peso / 100 / (r.px / 100), 0), v: r => r.px > 0 ? r.peso / r.px : null }] : []),
+  ];
+  const NOMBRE = { bullet: "Bullet", barbell: "Barbell" };
+  const bloques = d.carteras.map(c => {
+    const V = Object.fromEntries(Object.entries(c.variantes).map(([k, v]) => [k, armar(v.bonos)])), x = V[est];
+    const fila = k => `<tr${k === est ? ' class="ord"' : ""}><td><b>${NOMBRE[k]}</b></td><td class="n">${pct(V[k].t)}</td><td class="n">${num(V[k].dm)}</td><td class="n">${num(V[k].cx, 1)}</td><td class="n">${num(V[k].q, 0)}</td><td class="n">${pct(V[k].corto, 0)}</td></tr>`;
+    const dif = V.barbell.t != null && V.bullet.t != null ? (V.barbell.t - V.bullet.t) * 1e4 : null;
     const caja = document.createElement("section");
     caja.className = "tarjeta";
-    caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)}</h4>
-      <div class="datos">${dato("TIR ponderada", pct(prom("t")))}${dato("Duration mod.", num(prom("dm")))}${dato("Cupón corriente", pct(prom("cc")))}${dato("Calidad promedio", num(prom("q"), 0))}${dato("Ley NY", pct(parte(r => r.ley === "NY"), 0))}${dato("Cobra en cable", pct(parte(r => r.b.cobra === "CCL"), 0))}</div>
-      <p class="nota">${esc(c.lectura)}</p>`;
-    caja.append(tabla("cartera-" + c.id, filas, cols));
+    caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
+      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}</div>
+      <p class="nota">${esc(c.variantes[est].lectura)}</p>
+      <div class="tabla-caja"><table><thead><tr><th>Bullet vs barbell</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${fila("bullet")}${fila("barbell")}</tbody></table></div>
+      ${dif == null ? "" : `<p class="nota">El barbell rinde <b>${num(Math.abs(dif), 0)} pb ${dif < 0 ? "menos" : "más"}</b> de TIR que el bullet con ${num(V.barbell.dm)} contra ${num(V.bullet.dm)} de duration, a cambio de ${num(V.barbell.cx - V.bullet.cx, 1)} de convexidad ${V.barbell.cx >= V.bullet.cx ? "extra" : "(menos)"}.</p>`}`;
+    caja.append(tabla("cartera-" + c.id + "-" + est, x.filas, cols));
     return caja;
   });
   el.replaceChildren(barra,
     nota(`Armadas el ${fecha(d.armado)} · ${esc(d.reglas)} ${esc(d.base)} La TIR ponderada es el promedio por peso de las TIR de cada bono, una aproximación a la TIR de la cartera.`),
+    nota(esc(d.estructuras)),
     ...bloques,
     nota(`<b>${esc(d.aviso)}</b>`));
 }
