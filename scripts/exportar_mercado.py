@@ -196,6 +196,36 @@ def lineas_byma(r):
     return {"D": a[1] if len(a) > 1 else None, "C": a[2] if len(a) > 2 else None} if len(a) > 1 else None
 
 
+UST = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{a}/all"
+       "?type=daily_treasury_yield_curve&field_tdr_date_value={a}&page&_format=csv")
+PLAZOS_UST = {"1 Mo": 1 / 12, "3 Mo": 0.25, "6 Mo": 0.5, "1 Yr": 1, "2 Yr": 2, "3 Yr": 3, "5 Yr": 5, "7 Yr": 7,
+              "10 Yr": 10, "20 Yr": 20, "30 Yr": 30}
+
+
+def tesoro(cierre):
+    """Curva par del Tesoro de EE.UU. (fuente oficial) del último día hábil hasta el cierre de BYMA. Las tasas par son
+    semestrales (bond equivalent): se pasan a efectiva anual, la convención de las TIR de la app."""
+    c = dt.date.fromisoformat(cierre)
+    texto = urllib.request.urlopen(urllib.request.Request(UST.format(a=c.year), headers={"User-Agent": "Mozilla/5.0"}),
+                                   timeout=30).read().decode()
+    filas = list(csv.DictReader(texto.splitlines()))
+    fila = max((f for f in filas if dt.datetime.strptime(f["Date"], "%m/%d/%Y").date() <= c),
+               key=lambda f: dt.datetime.strptime(f["Date"], "%m/%d/%Y"))
+    curva = [[a, round((1 + float(fila[k]) / 200) ** 2 - 1, 5)] for k, a in PLAZOS_UST.items() if fila.get(k)]
+    return {"fecha": dt.datetime.strptime(fila["Date"], "%m/%d/%Y").date().isoformat(), "fuente": "U.S. Treasury, par yield curve",
+            "convencion": "efectiva anual (desde la tasa par semestral)", "curva": curva}
+
+
+def historia(hi, tk):
+    """Variación en la ventana del tablero (~21 ruedas): paridad en puntos y TIR en pb, de la serie consolidada."""
+    par = [x for x in (hi.get("par") or {}).get(tk) or [] if x]
+    tirs = [x for x in (hi.get("v") or {}).get(tk) or [] if x is not None]
+    if len(par) < 10 or (hi.get("u") or {}).get(tk) != "TIR":
+        return None
+    return {"desde": hi["f"][0], "hasta": hi["f"][-1], "par0": par[0], "par": par[-1], "dpar": round(par[-1] - par[0], 2),
+            "dtir_pb": round((tirs[-1] - tirs[0]) * 100) if len(tirs) >= 10 else None}
+
+
 def main():
     d = cargar()
     chamo = chamomberg()
@@ -211,7 +241,7 @@ def main():
         o |= {"sector": r.get("sec"), "cobra": cobro, "fuente_cobro": fuente, "cobra_byma": r.get("mp"),
               "chamomberg": r["tk"] in chamo,
               "calificacion": (chamo.get(r["tk"]) or {}).get("calificacion_chamomberg") or None,
-              "emitido": r.get("mto")}
+              "emitido": r.get("mto"), "hist": historia(d["on"].get("histi") or {}, r["tk"])}
         o["fuente_flujos"] = "BYMA" if o["flujos"] else None
         ons.append(o)
     en_byma = {o["tk"] for o in ons}
@@ -319,6 +349,12 @@ def main():
         previa = json.loads(meta_previa.read_text())
         if "emisores" in previa:
             meta["emisores"] = previa["emisores"]
+    try:
+        meta["tesoro"] = tesoro(fecha)
+    except Exception as e:
+        print(f"⚠ Tesoro de EE.UU. no respondió ({type(e).__name__}: {e}): queda la curva anterior.")
+        if meta_previa.exists() and "tesoro" in json.loads(meta_previa.read_text()):
+            meta["tesoro"] = json.loads(meta_previa.read_text())["tesoro"]
     meta_previa.write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     print(f"cierre {fecha} · " + " · ".join(f"{k} {v}" for k, v in meta["conteos"].items())
           + f" · chamomberg {meta['ons_chamomberg']} (flujos de chamomberg: {len(meta['flujos_chamomberg'])})"

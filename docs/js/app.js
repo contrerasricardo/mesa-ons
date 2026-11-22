@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122f";
-import { crearMotor } from "./pesos.js?v=20261122f";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261122g";
+import { crearMotor } from "./pesos.js?v=20261122g";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1092,7 +1092,15 @@ const VOL_MIN = 20000;   // US$ por día: debajo de eso la TIR suele ser de un c
 //     del emisor y por ln(DM). No se ancla al soberano: hoy su curva está invertida y los corporativos rinden por debajo.
 // (2) Curva: la TIR contra la curva del propio emisor ajustada SIN el bono que se mide (misma ley si alcanza); sin curva
 //     propia, contra la mediana de sus pares de la misma celda de la matriz y la misma ley.
-const TESORO = 0.0368;   // T-bill de EE.UU., dato manual (el mismo del modelo de Emisores); tasa de la misma moneda que el cable
+const TESORO = 0.0368;   // respaldo si meta.json no trae la curva: el T-bill manual del modelo de Emisores
+// Tesoro de EE.UU. a la duration del bono: curva par oficial del cierre (meta.tesoro, ya en efectiva anual), lineal entre plazos
+function tesoroA(dm) {
+  const c = E.meta?.tesoro?.curva;
+  if (!c?.length || dm == null) return TESORO;
+  if (dm <= c[0][0]) return c[0][1];
+  for (let i = 1; i < c.length; i++) if (dm <= c[i][0]) return c[i - 1][1] + (c[i][1] - c[i - 1][1]) * (dm - c[i - 1][0]) / (c[i][0] - c[i - 1][0]);
+  return c.at(-1)[1];
+}
 const ALPHA_SECTOR = { "O&G": 0.35, "Infraestructura": 0.45, "Telco": 0.55 };   // α que supone el modelo de Emisores; resto 0,60
 const alphaDe = s => ALPHA_SECTOR[s] ?? 0.60;
 const DM_MIN = 0.5;   // debajo, el precio va a la par al vencimiento y la TIR no mide valor
@@ -1168,8 +1176,15 @@ function enCable(b, cj) {
   const px = d.ask / (1 + cj.c), t = tir(d.flujos, px), tb = d.bid ? tir(d.flujos, d.bid / (1 + cj.c)) : null;
   return { ...base, px, fl: d.flujos, t, tb: d.fuente === "cierre" ? null : tb, dm: t != null ? duration(d.flujos, t).modificada : r.dm, via: b.cobra === "CCL" ? "canje cable" : "canje" };
 }
+// sensibilidad al canje: la TIR en cable que sale del canje, si el canje fuera la mitad del de hoy
+const conMedioCanje = (e, cj) => (e?.via === "canje" || e?.via === "canje cable") && cj?.c > 0 && e.px && e.fl?.length
+  ? tir(e.fl, e.px * (1 + cj.c) / (1 + cj.c / 2)) : null;
 const valido = r => r.fl.length && r.t != null && !dudosa(r.t) && r.dm >= DM_MIN && r.b.vol >= VOL_MIN;
 // contexto de una pasada: canje, curva soberana por ley en cable, calibración por calidad, bonos y celdas de la matriz
+// castigado por el mercado: perdió 8 puntos de paridad o más en la ventana del tablero (~21 ruedas), o subió su TIR
+// 300 pb con al menos 4 puntos de caída. Su calidad sale de balances al 3T26 y el precio ya descuenta algo más nuevo.
+const CASTIGO_PAR = -8, CASTIGO_PB = 300;
+const castigado = b => !!b?.hist && (b.hist.dpar <= CASTIGO_PAR || (b.hist.dtir_pb >= CASTIGO_PB && b.hist.dpar <= -4));
 function contextoValuacion(d) {
   const cj = canjeMercado(), pts = {};
   for (const s of E.soberanos) {
@@ -1187,9 +1202,25 @@ function contextoValuacion(d) {
   for (const r of ok) { const k = r.ley + nivelDe(r.q) + tramoDe(r.dm); (celdas[k] ||= []).push(r); }
   const conv = r => r.b.cobra === "CCL" || r.tLinea == null || dudosa(r.tLinea) ? 0 : r.t - r.tLinea;
   for (const r of bonos) r.conv = conv(r);
-  const p = ok.filter(r => r.q != null).map(r => ({ x: [100 - r.q, Math.log(r.dm), r.conv], y: r.t, tk: r.b.tk, ley: r.ley }));
+  const p = ok.filter(r => r.q != null && !castigado(r.b)).map(r => ({ x: [100 - r.q, Math.log(r.dm), r.conv], y: r.t, tk: r.b.tk, ley: r.ley }));
   const c = robusto(p, curvaMercado, (c, q) => q.y - c.f(q.ley, 100 - q.x[0], Math.exp(q.x[1]), q.x[2]));
   return { cj, sob, cal: c && { ...c, total: p.length }, bonos, ok, celdas };
+}
+// TIR al peor con rescate a la par: la base no trae los cronogramas de rescate, así que se calcula la cota inferior de
+// un bono sobre la par si el emisor pudiera rescatarlo al 100% en cualquier fecha de pago desde dentro de un año (el período
+// sin rescate habitual; antes, la tasa anualizada de un rescate de meses no tiene sentido). Si el bono
+// no es rescatable o su rescate tiene prima, la TIR real queda entre esta y la de vencimiento.
+function tirAlPeor(fl, px, t) {
+  const cap = fl.reduce((a, f) => a + f[1], 0);
+  if (!fl?.length || !(px > cap) || t == null) return null;
+  let peor = null, resto = cap;
+  for (let k = 0; k < fl.length - 1; k++) {
+    resto -= fl[k][1];
+    if (fl[k][0] < 365 || resto <= 0) continue;
+    const y = tir([...fl.slice(0, k), [fl[k][0], fl[k][1] + resto, fl[k][2], fl[k][3] || 0]], px);
+    if (y != null && (peor == null || y < peor.t)) peor = { t: y, dias: fl[k][0] };
+  }
+  return peor && peor.t < t - 0.0025 ? peor : null;
 }
 function valorar(r, ctx) {
   r = ctx.bonos.find(o => o.b.tk === r.b.tk) || r;
@@ -1200,6 +1231,9 @@ function valorar(r, ctx) {
   const ley = leyDe(b), sob = ctx.sob[ley], cal = ctx.cal, q = x.cualidades?.Promedio, v = { ley, via: r.via, t: r.t, tLinea: r.tLinea, px: r.px };
   const medio = r.tb != null && r.tb > r.t ? (r.tb - r.t) / 2 * 1e4 : 0;
   v.banda = Math.max(BANDA_PB, medio);
+  v.peor = tirAlPeor(r.fl, r.px, r.t);
+  const medio_ = conMedioCanje(r, ctx.cj);
+  if (medio_ != null) v.alt = `Con el canje a la mitad (${pct(ctx.cj.c / 2, 1)}), la TIR en cable sería ${pct(medio_)} (${pb((medio_ - r.t) * 1e4)} pb)`;
   // (1) contra lo que el mercado paga, en cable, por un bono de su calidad, su ley y su duration
   if (cal?.a[ley] != null && q != null) {
     v.tj = cal.f(ley, q, r.dm, r.conv || 0);
@@ -1209,7 +1243,8 @@ function valorar(r, ctx) {
   if (sob?.f) {
     v.sob = sob.f(r.dm); v.s = r.t - v.sob;
     // α: qué parte del riesgo país (soberano de su ley sobre el Tesoro, en cable) le cobra el mercado
-    if (v.sob - TESORO > 0.002) v.aImpl = (Math.round((r.t - TESORO) / (v.sob - TESORO) * 100) / 100) || 0;
+    v.ust = tesoroA(r.dm); v.sUst = r.t - v.ust;
+    if (v.sob - v.ust > 0.002) v.aImpl = (Math.round((r.t - v.ust) / (v.sob - v.ust) * 100) / 100) || 0;
   }
   // (2) contra su curva, sin el bono que se mide
   const otros = ctx.ok.filter(o => o.em === r.em && o.b.tk !== b.tk), misma = otros.filter(o => o.ley === ley);
@@ -1225,14 +1260,19 @@ function valorar(r, ctx) {
   v.lado = cal_ === rel ? rel : rel === "en precio" ? cal_ : cal_ === "en precio" ? rel : rel ? "mixto" : cal_;
   v.lectura = rel && cal_ ? (rel === cal_ ? (rel === "en precio" ? "en precio en las dos" : `${rel} en las dos`) : `${cal_} por su calidad; ${rel} contra ${v.ref}`)
     : cal_ ? `${cal_} por su calidad` : rel ? `${rel} contra ${v.ref}` : "—";
+  if (castigado(b)) {
+    const h = b.hist;
+    v.castigo = h; v.ladoModelo = v.lado; v.lado = "castigado";
+    v.lectura = `castigado por el mercado: ${num(h.dpar, 1)} pts de paridad${h.dtir_pb != null ? ` y ${h.dtir_pb > 0 ? "+" : ""}${num(h.dtir_pb, 0)} pb de TIR` : ""} desde el ${fecha(h.desde)}. El modelo lo daría ${v.ladoModelo || "—"}, pero su calidad es del balance al 3T26: el precio ya descuenta algo más nuevo`;
+  }
   return v;
 }
 const ladoCls = y => y == null ? "" : y > 0 ? "pos" : "neg";
 const VIA = { cable: "cobra cable: su línea C", "línea C": "cobra MEP: precio de su propia línea C", canje: "cobra MEP: precio MEP pasado a cable con el canje (estimado, supone canje cero al cobro)", "canje cable": "cobra cable pero hoy solo hay precio en MEP: pasado a cable con el canje" };
-const TIRC = v => v.t == null ? "—" : `<span title="${esc(VIA[v.via] || "")}${v.via !== "cable" && v.tLinea != null ? ` · TIR en MEP ${pct(v.tLinea)}` : ""}">${TIRV(v.t)}${v.via === "canje" ? "<small class=\"suave\">*</small>" : ""}</span>`;
+const TIRC = v => v.t == null ? "—" : `<span title="${esc(VIA[v.via] || "")}${v.via !== "cable" && v.tLinea != null ? ` · TIR en MEP ${pct(v.tLinea)}` : ""}${v.peor ? ` · Sobre la par: si fuera rescatable a la par desde dentro de un año, la TIR al peor sería ${pct(v.peor.t)} (rescate en ${num(v.peor.dias / 365, 1)} años); la base no trae el cronograma de rescate` : ""}${v.alt ? ` · ${v.alt}` : ""}">${TIRV(v.t)}${v.via === "canje" ? "<small class=\"suave\">*</small>" : ""}${v.peor ? "<small class=\"aviso\">↓</small>" : ""}</span>`;
 const VAL_PB = v => v.vsCurva == null ? "—" : `<span class="${Math.abs(v.vsCurva) > v.banda ? ladoCls(v.vsCurva) : "suave"}" title="TIR contra ${esc(v.refLargo)}: positivo = rinde más = barato. Banda: ±${num(v.banda, 0)} pb">${pb(v.vsCurva)} pb</span>`;
 const VAL_CAL = v => v.vsCal == null ? "—" : `<span class="${Math.abs(v.vsCal) > v.banda ? ladoCls(v.vsCal) : "suave"}" title="TIR contra la TIR justa por su calidad (${pct(v.tj)}): positivo = barato. En precio: ${v.vsPx > 0 ? "+" : ""}${pct(v.vsPx, 1)}">${pb(v.vsCal)} pb</span>`;
-const VAL_LEC = v => v.motivo ? `<span class="suave">${esc(v.motivo)}</span>` : `<span class="${v.lado === "barato" ? "pos" : v.lado === "caro" ? "neg" : "suave"}">${esc(v.lectura)}</span>`;
+const VAL_LEC = v => v.motivo ? `<span class="suave">${esc(v.motivo)}</span>` : `<span class="${v.lado === "barato" ? "pos" : v.lado === "caro" ? "neg" : v.lado === "castigado" ? "aviso" : "suave"}">${esc(v.lectura)}</span>`;
 
 function fichaCredito(x) {
   const bonos = E.ons.filter(b => codigoEm(b.emisor) === x.em).map(b => ({ b, ...cotizar(b), c: calif(b) }))
@@ -1346,7 +1386,7 @@ function tablaValuacion(d, emisores) {
     { k: "lec", t: "Lectura", f: r => VAL_LEC(r.v), v: r => r.v.lado },
   ];
   return [
-    nota(`Valuación bono por bono (${filas.length} ON; ${fuera} quedan afuera por vencer en menos de medio año de duration, operar menos de US$ 20 k por día o no tener TIR confiable). <b>Todo en dólar cable</b>, la moneda del Tesoro, para que las TIR se puedan comparar entre sí: ${via("cable")} cobran cable y usan su línea C; ${via("canje cable")} cobran cable pero hoy solo tienen precio en MEP, que se pasa a cable con el canje (arbitraje: sus flujos ya son cable); ${via("línea C")} cobran MEP y usan el precio de su propia línea C; ${via("canje")} cobran MEP y su precio se pasa a cable con el canje de mercado (${cj ? `${pct(cj.c, 1)}, ${cj.fuente === "vivo" ? `mediana de ${cj.n} bonos con las dos líneas en vivo` : `CCL ${num(cj.ccl, 2)} sobre MEP ${num(cj.mep, 2)} del cierre de BYMA`}` : "sin dato"}), marcados con *: misma convención que la línea C (supone que cada dólar MEP que paga vale un cable al cobro), así que es una estimación y no un precio operable. <b>Referencia soberana de la misma ley</b>, también en cable: ${sobTxt}; fuera de ese rango la curva queda plana. El soberano se usa para el spread y el α, no para la TIR justa: hoy su curva está invertida y los corporativos rinden por debajo del país. <b>Vs. calidad</b>: la TIR justa es lo que el mercado paga en cable por un bono de su calidad, su ley y su duration, según una curva corporativa ajustada a todo el universo: ${cal ? `para un emisor de calidad 70 a DM 3, ${calTxt}; ${pb(cal.bq * 1e5)} pb más por cada 10 puntos menos de calidad y ${pb(cal.bd * Math.log(2) * 1e4)} pb cada vez que se duplica la duration; y de lo que suma a la TIR pasar un bono MEP a cable con canje cero al cobro, el mercado ya descuenta ${pct(cal.bc, 0)} (la parte del canje que espera que siga), así que esa conversión no lo vuelve barato por sí sola (regresión de ${cal.n} bonos con un nivel por ley y pendientes comunes${cal.fuera?.length ? `; ${cal.fuera.length} afuera por desalineados: ${cal.fuera.map(p => p.tk).join(", ")}` : ""})` : "sin calibración"}. Con esa TIR se revalúan sus flujos y sale el precio justo. <b>Vs. curva</b>: contra una curva ajustada a los otros bonos del mismo emisor (sin el que se mide; misma ley si tiene tres), o contra la mediana de sus pares de la misma celda y ley. Positivo es barato; en precio dentro de ±${BANDA_PB} pb o de media punta si las puntas están más abiertas. La primera vara dice si el emisor rinde lo que corresponde a su calidad; la segunda, cuál de sus bonos conviene. <b>α mercado</b>: qué parte del riesgo país (soberano sobre el Tesoro de ${pct(TESORO)}) le cobra el mercado, contra la que supone el modelo de Emisores para su sector. Las amortizables se comparan por duration; en las rescatables la TIR al vencimiento sobreestima (la base no trae las fechas de rescate).`),
+    nota(`Valuación bono por bono (${filas.length} ON; ${fuera} quedan afuera por vencer en menos de medio año de duration, operar menos de US$ 20 k por día o no tener TIR confiable). <b>Todo en dólar cable</b>, la moneda del Tesoro, para que las TIR se puedan comparar entre sí: ${via("cable")} cobran cable y usan su línea C; ${via("canje cable")} cobran cable pero hoy solo tienen precio en MEP, que se pasa a cable con el canje (arbitraje: sus flujos ya son cable); ${via("línea C")} cobran MEP y usan el precio de su propia línea C; ${via("canje")} cobran MEP y su precio se pasa a cable con el canje de mercado (${cj ? `${pct(cj.c, 1)}, ${cj.fuente === "vivo" ? `mediana de ${cj.n} bonos con las dos líneas en vivo` : `CCL ${num(cj.ccl, 2)} sobre MEP ${num(cj.mep, 2)} del cierre de BYMA`}` : "sin dato"}), marcados con *: misma convención que la línea C (supone que cada dólar MEP que paga vale un cable al cobro), así que es una estimación y no un precio operable; sobre la TIR se ve cuánto daría con el canje a la mitad, para medir cuánto depende de ese supuesto. <b>Referencia soberana de la misma ley</b>, también en cable: ${sobTxt}; fuera de ese rango la curva queda plana. El soberano se usa para el spread y el α, no para la TIR justa: hoy su curva está invertida y los corporativos rinden por debajo del país. <b>Vs. calidad</b>: la TIR justa es lo que el mercado paga en cable por un bono de su calidad, su ley y su duration, según una curva corporativa ajustada a todo el universo: ${cal ? `para un emisor de calidad 70 a DM 3, ${calTxt}; ${pb(cal.bq * 1e5)} pb más por cada 10 puntos menos de calidad y ${pb(cal.bd * Math.log(2) * 1e4)} pb cada vez que se duplica la duration; y de lo que suma a la TIR pasar un bono MEP a cable con canje cero al cobro, el mercado ya descuenta ${pct(cal.bc, 0)} (la parte del canje que espera que siga), así que esa conversión no lo vuelve barato por sí sola (regresión de ${cal.n} bonos con un nivel por ley y pendientes comunes${cal.fuera?.length ? `; ${cal.fuera.length} afuera por desalineados: ${cal.fuera.map(p => p.tk).join(", ")}` : ""})` : "sin calibración"}. Con esa TIR se revalúan sus flujos y sale el precio justo. <b>Vs. curva</b>: contra una curva ajustada a los otros bonos del mismo emisor (sin el que se mide; misma ley si tiene tres), o contra la mediana de sus pares de la misma celda y ley. Positivo es barato; en precio dentro de ±${BANDA_PB} pb o de media punta si las puntas están más abiertas. La primera vara dice si el emisor rinde lo que corresponde a su calidad; la segunda, cuál de sus bonos conviene. <b>Castigados por el mercado</b>: los que perdieron ${-CASTIGO_PAR} puntos de paridad o más en el último mes del tablero (o subieron ${CASTIGO_PB} pb de TIR con al menos 4 puntos de caída) no se leen como baratos: la calidad del modelo sale de balances al 3T26 y una caída así suele descontar algo posterior (deuda nueva, una norma, un evento del emisor). Quedan fuera de la calibración de la curva de calidad. <b>α mercado</b>: qué parte del riesgo país (soberano sobre el Tesoro de EE.UU. a la misma duration, ${E.meta?.tesoro ? `curva par oficial del ${fecha(E.meta.tesoro.fecha)} pasada a efectiva anual: ${E.meta.tesoro.curva.filter(p => [1, 3, 5, 10].includes(p[0])).map(p => `${p[0]} año${p[0] > 1 ? "s" : ""} ${pct(p[1])}`).join(", ")}` : `sin curva, ${pct(TESORO)} plano`}) le cobra el mercado, contra la que supone el modelo de Emisores para su sector. Las amortizables se comparan por duration; en las rescatables la TIR al vencimiento sobreestima (la base no trae las fechas de rescate): con ↓, los bonos sobre la par, cuya TIR caería si el emisor los rescatara a la par en una fecha de pago desde dentro de un año (el período sin rescate habitual); pasa el mouse para ver esa TIR al peor, que es una cota inferior.`),
     tabla("valuacion", filas, cols, { alClick: r => porEm.get(r.em) && fichaEmisor(porEm.get(r.em)), grupo: r => r.em }),
   ];
 }
@@ -1436,7 +1476,32 @@ async function pCarteras() {
     if (d?.ask && d.flujos?.length) return tir(d.flujos, d.ask);
     return cj && e?.px && r.fl?.length ? tir(r.fl, e.px * (1 + cj.c)) : null;
   };
-  const dosTir = (b, r) => { const e = enCable(b, cj), ok = t => t != null && !dudosa(t) ? t : null; return { tC: ok(e.t), tM: ok(tirMep(b, r, e)), viaC: e.via }; };
+  // precio y flujos de cada escala, para la TIR de la cartera con los flujos juntos
+  const enMep = (b, r, e) => {
+    if (b.cobra !== "CCL") return { px: r.px, fl: r.fl };
+    const d = enVivo(b, "D") || deCierre(b, "D");
+    if (d?.ask && d.flujos?.length) return { px: d.ask, fl: d.flujos };
+    return cj && e?.px ? { px: e.px * (1 + cj.c), fl: r.fl } : null;
+  };
+  const dosTir = (b, r) => {
+    const e = enCable(b, cj), ok = t => t != null && !dudosa(t) ? t : null;
+    const m = conMedioCanje(e, cj);
+    return { tC: ok(e.t), tM: ok(tirMep(b, r, e)), viaC: e.via, tCmedio: m != null && !dudosa(m) ? m : null, pfC: e.px && e.fl?.length ? { px: e.px, fl: e.fl } : null, pfM: enMep(b, r, e) };
+  };
+  // TIR de la cartera: se invierte el peso de cada bono a su precio, se suman sus flujos día por día y se saca una sola TIR.
+  // Es la tasa que rinde la plata de la cartera; el promedio por peso de las TIR es solo una aproximación (pesa igual un
+  // bono que devuelve en meses que uno que paga por años).
+  const tirCartera = (filas, k) => {
+    const con = filas.filter(r => r[k]?.px > 0 && r[k].fl?.length), W = con.reduce((s, r) => s + r.peso, 0);
+    if (!W) return null;
+    const por = new Map();
+    for (const r of con) {
+      const n = 100 * r.peso / W / r[k].px;
+      for (const [dd, c, x, a] of r[k].fl) { const q = por.get(dd) || [dd, 0, 0, 0]; q[1] += c * n; q[2] += x * n; q[3] += (a || 0) * n; por.set(dd, q); }
+    }
+    const t = tir([...por.values()].sort((p, q) => p[0] - q[0]), 100);
+    return t == null || dudosa(t) ? null : { t, cubre: W };
+  };
   const armar = bonos => {
     const filas = bonos.map(x => {
       const b = porTk.get(x.tk);
@@ -1452,28 +1517,34 @@ async function pCarteras() {
     const ok = filas.filter(r => !r.falta), P = ok.reduce((s, r) => s + r.peso, 0) || 1;
     const prom = k => { const z = ok.filter(r => r[k] != null && isFinite(r[k]) && !(k === "t" && dudosa(r[k]))), w = z.reduce((s, r) => s + r.peso, 0); return w ? z.reduce((s, r) => s + r.peso * r[k], 0) / w : null; };
     const parte = g => ok.filter(g).reduce((s, r) => s + r.peso, 0) / P;
-    return { filas, t: prom("t"), tC: prom("tC"), tM: prom("tM"), dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"), z: prom("z"),
+    const pC = tirCartera(ok, "pfC"), pM = tirCartera(ok, "pfM");
+    return { filas, t: prom("t"), tC: pC?.t ?? prom("tC"), tM: pM?.t ?? prom("tM"), tCprom: prom("tC"), tMprom: prom("tM"), cubreC: pC ? pC.cubre / P : 0, dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"), z: prom("z"),
       zriesgo: parte(r => r.zona === "riesgo"),
       ny: parte(r => r.ley === "NY"), cable: parte(r => r.b.cobra === "CCL"), corto: parte(r => r.dm != null && r.dm < 1.5),
       dol: parte(r => r.ing === "dólares"), pesos: parte(r => r.ing === "pesos"),
       sectores: Object.entries(ok.reduce((m, r) => (m[r.sec] = (m[r.sec] || 0) + r.peso / P, m), {})).sort((a, b) => b[1] - a[1]),
       lento: ok.filter(r => r.dias != null).sort((a, b) => b.dias - a.dias)[0] };
   };
-  // escalera: un bono por año de vencimiento con los emisores del perfil, el de mayor TIR de cada año, tope 25% por emisor
+  // escalera: un bono por año de vencimiento con los emisores del perfil, el más barato contra su calidad (vs. calidad de
+  // Emisores, en pb) de cada año, tope 25% por emisor; sin valuación ese año, el de mayor TIR en cable. Castigados, afuera.
+  let ctxV = null;
+  const valDe = b => { try { ctxV ||= contextoValuacion(E.emisores); const v = valorar({ b }, ctxV); return v.motivo ? null : v; } catch { return null; } };
   const ESCALONES = { defensiva: [2027, 2030], conservadora: [2027, 2032], moderada: [2027, 2034], arriesgada: [2027, 2036] };
   const escalera = c => {
     const [a, z] = ESCALONES[c.id] || [2027, 2032];
     const ems = new Set(Object.values(c.variantes).flatMap(v => v.bonos.map(x => x.em)));
     const cand = E.ons.map(b => ({ b, em: codigoEm(b.emisor), anio: +(b.vencimiento || "").slice(0, 4), ...cotizar(b), tc: enCable(b, cj).t }))
-      .filter(r => ems.has(r.em) && r.anio >= a && r.anio <= z && r.fl.length && r.t != null && !dudosa(r.t) && r.b.vol >= VOL_MIN);
+      .filter(r => ems.has(r.em) && r.anio >= a && r.anio <= z && r.fl.length && r.t != null && !dudosa(r.t) && r.b.vol >= VOL_MIN && !castigado(r.b))
+      .map(r => ({ ...r, rv: valDe(r.b)?.vsCal ?? null }));
+    const orden = (p, q) => (q.rv != null) - (p.rv != null) || (q.rv ?? 0) - (p.rv ?? 0) || (q.tc ?? q.t) - (p.tc ?? p.t);
     const anios = [...new Set(cand.map(r => r.anio))].sort(), tope = Math.max(1, Math.floor(anios.length / 4 + 1e-9)), uso = {}, bonos = [];
     for (const y of anios) {
-      const r = cand.filter(r => r.anio === y && (uso[r.em] || 0) < tope).sort((p, q) => (q.tc ?? q.t) - (p.tc ?? p.t))[0];
+      const r = cand.filter(r => r.anio === y && (uso[r.em] || 0) < tope).sort(orden)[0];
       if (r) { uso[r.em] = (uso[r.em] || 0) + 1; bonos.push({ tk: r.b.tk, em: r.em }); }
     }
     const anios2 = bonos.map(x => porTk.get(x.tk).vencimiento.slice(0, 4));
     return { bonos: bonos.map(x => ({ ...x, peso: 100 / bonos.length })),
-      lectura: bonos.length ? `Escalera armada sola con los emisores de este perfil: un bono por año de ${anios2[0]} a ${anios2.at(-1)}, el de mayor TIR en cable de cada año entre los que operan al menos US$ 20 k por día, con el mismo peso (${num(100 / bonos.length, 1)}%) y tope de 25% por emisor. Cada año vence un escalón y se reinvierte en el más largo: no apuesta a la forma de la curva y reparte el riesgo de reinversión en el tiempo.` : "No hay bonos para armar la escalera en este rango de años." };
+      lectura: bonos.length ? `Escalera armada sola con los emisores de este perfil: un bono por año de ${anios2[0]} a ${anios2.at(-1)}, el más barato contra su calidad de cada año (el que más rinde por encima de lo que el mercado paga en cable por un emisor de su calidad, su ley y su duration; si ese año ninguno tiene valuación, el de mayor TIR en cable) entre los que operan al menos US$ 20 k por día y no vienen castigados por el mercado, con el mismo peso (${num(100 / bonos.length, 1)}%) y tope de 25% por emisor. Cada año vence un escalón y se reinvierte en el más largo: no apuesta a la forma de la curva y reparte el riesgo de reinversión en el tiempo.` : "No hay bonos para armar la escalera en este rango de años." };
   };
   // escenarios: la TIR de una ON es Tesoro + riesgo país + spread propio. El Tesoro mueve al riesgo país (arrastre, supuesto
   // declarado) y el riesgo país tiene choques propios; en estrés la curva argentina se invierte (el corto sube más).
@@ -1507,7 +1578,7 @@ async function pCarteras() {
     { k: "cobra", t: "Cobra", f: r => r.falta ? "—" : esc(r.b.cobra === "CCL" ? "cable" : "MEP"), v: r => r.b?.cobra },
     { k: "vto", t: "Vence", cls: "ocultar-movil", f: r => r.falta ? "—" : fecha(r.b.vencimiento), v: r => r.b?.vencimiento },
     { k: "px", t: "Precio", n: 1, f: r => r.falta ? "—" : `${num(r.px)}${r.vivo ? "" : ' <small class="suave">cierre</small>'}`, v: r => r.px },
-    { k: "tC", t: "TIR cable", n: 1, titulo: "TIR en cable: precio de la línea C si opera; si no, el de MEP pasado a cable con el canje (*)", f: r => r.falta ? "—" : r.tC == null ? (r.dm != null && r.dm < 0.5 ? '<span title="Vence muy pronto: el canje pasado a tasa anual da un número sin sentido; queda fuera del promedio en cable">—</span>' : "—") : pct(r.tC) + (r.viaC === "canje" || r.viaC === "canje cable" ? "*" : ""), v: r => r.tC },
+    { k: "tC", t: "TIR cable", n: 1, titulo: "TIR en cable: precio de la línea C si opera; si no, el de MEP pasado a cable con el canje (*)", f: r => r.falta ? "—" : r.tC == null ? (r.dm != null && r.dm < 0.5 ? '<span title="Vence muy pronto: el canje pasado a tasa anual da un número sin sentido; queda fuera del promedio en cable">—</span>' : "—") : (r.tCmedio != null ? `<span title="Sale del canje de ${pct(cj.c, 1)}. Con el canje a la mitad, ${pct(r.tCmedio)}">${pct(r.tC)}*</span>` : pct(r.tC) + (r.viaC === "canje" || r.viaC === "canje cable" ? "*" : "")), v: r => r.tC },
     { k: "tM", t: "TIR MEP", n: 1, titulo: "TIR en MEP: la de la línea D; para los que cobran cable, su precio en MEP", f: r => r.falta ? "—" : pct(r.tM), v: r => r.tM },
     { k: "dm", t: "DM", n: 1, f: r => r.falta ? "—" : num(r.dm), v: r => r.dm },
     { k: "cx", t: "Convex.", n: 1, cls: "ocultar-movil", titulo: "Convexidad en años²", f: r => num(r.cx, 1), v: r => r.cx },
@@ -1534,7 +1605,7 @@ async function pCarteras() {
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
-      <div class="datos">${dato("TIR cable", pct(x.tC))}${dato("TIR MEP", pct(x.tM))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", zColor(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
+      <div class="datos">${dato("TIR cable", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tCprom)}">${pct(x.tC)}</span>`)}${dato("TIR MEP", `<span title="TIR de los flujos juntos de la cartera. Promedio por peso de las TIR: ${pct(x.tMprom)}">${pct(x.tM)}</span>`)}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Z'' ponderado", zColor(x.z))}${dato("En zona de riesgo (Z'')", pct(x.zriesgo, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
       <p class="nota">${esc(lectura)}</p>
       <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
       <div class="tabla-caja"><table><thead><tr><th>Estructura</th><th class="n">TIR cable</th><th class="n">TIR MEP</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${EST.map(fila).join("")}</tbody></table></div>
@@ -1547,7 +1618,7 @@ async function pCarteras() {
     return caja;
   });
   el.replaceChildren(barra,
-    nota(`Armadas el ${fecha(d.armado)} · ${esc(d.reglas)} ${esc(d.base)} La TIR de la cartera es el promedio por peso de las TIR de cada bono, una aproximación, y va en las dos escalas: en cable, que es la guía internacional y la que se compara con el Tesoro, y en MEP. Cada bono usa el precio de la línea donde se mide si opera; si no, se pasa con el canje (${cj ? pct(cj.c, 1) + (cj.fuente === "vivo" ? ", de las puntas" : ", del cierre") : "sin canje"}) con los mismos flujos, que es una estimación: supone que el canje no cambia hasta cada pago. Con asterisco, la TIR cable que sale del canje. Es la convención de la línea C: el precio en cable con los flujos nominales, así que en un bono corto el canje pesa mucho en la tasa anual; los que vencen en menos de medio año quedan fuera del promedio en cable.`),
+    nota(`Armadas el ${fecha(d.armado)} · ${esc(d.reglas)} ${esc(d.base)} La TIR de la cartera sale de juntar los flujos de todos sus bonos (el peso de cada uno invertido a su precio) y sacar una sola TIR: es lo que rinde la plata, no el promedio de las tasas (pasa el mouse sobre la TIR para ver ese promedio). Va en las dos escalas: en cable, que es la guía internacional y la que se compara con el Tesoro, y en MEP. Cada bono usa el precio de la línea donde se mide si opera; si no, se pasa con el canje (${cj ? pct(cj.c, 1) + (cj.fuente === "vivo" ? ", de las puntas" : ", del cierre") : "sin canje"}) con los mismos flujos, que es una estimación: supone que el canje no cambia hasta cada pago. Con asterisco, la TIR cable que sale del canje; pasa el mouse para ver cuánto daría con el canje a la mitad, que es la sensibilidad de esa estimación. Es la convención de la línea C: el precio en cable con los flujos nominales, así que en un bono corto el canje pesa mucho en la tasa anual: en la tabla los que vencen en menos de medio año no muestran TIR cable, y en la TIR de la cartera pesan por su plazo y no por esa tasa.`),
     nota(esc(d.estructuras)),
     nota(`${esc(d.lectura_sector || "")} ${esc(d.lectura_ingresos || "")} ${esc(d.liquidez || "")}`),
     nota(esc(d.lectura_altman || "")),
