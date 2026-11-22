@@ -13,19 +13,51 @@
         "bullet": {
           "lectura": "Cuatro emisores del primer escalón con vencimientos agrupados en 2029, todo ley argentina. Si el riesgo país sube 100 pb, el precio cae cerca de 2%.",
           "bonos": [
-            { "tk": "YM42O", "em": "YPF", "peso": 25 },
-            { "tk": "PN41O", "em": "PAE", "peso": 25 },
-            { "tk": "MGCTO", "em": "PAM", "peso": 25 },
-            { "tk": "NPCCO", "em": "CEPU", "peso": 25 }
+            {
+              "tk": "YM42O",
+              "em": "YPF",
+              "peso": 25
+            },
+            {
+              "tk": "PN41O",
+              "em": "PAE",
+              "peso": 25
+            },
+            {
+              "tk": "MGCTO",
+              "em": "PAM",
+              "peso": 25
+            },
+            {
+              "tk": "NPCCO",
+              "em": "CEPU",
+              "peso": 25
+            }
           ]
         },
         "barbell": {
           "lectura": "La mitad vence en 2027 (YPF y PAE) y la otra mitad son bonos ley Nueva York de 2031 de TGS y Pampa. Misma duration que el bullet, pero la mitad de la cartera devuelve los dólares en menos de un año.",
           "bonos": [
-            { "tk": "YM38O", "em": "YPF", "peso": 25 },
-            { "tk": "PN38O", "em": "PAE", "peso": 25 },
-            { "tk": "TSC3O", "em": "TGS", "peso": 25 },
-            { "tk": "MGCMO", "em": "PAM", "peso": 25 }
+            {
+              "tk": "YM38O",
+              "em": "YPF",
+              "peso": 25
+            },
+            {
+              "tk": "PN38O",
+              "em": "PAE",
+              "peso": 25
+            },
+            {
+              "tk": "TSC3O",
+              "em": "TGS",
+              "peso": 25
+            },
+            {
+              "tk": "MGCMO",
+              "em": "PAM",
+              "peso": 25
+            }
           ]
         }
       }
@@ -38,23 +70,71 @@
         "bullet": {
           "lectura": "Solo emisores del primer escalón, todos con vencimientos entre 2030 y 2032 y duration de 3 años. Dos tercios ley argentina y un tercio ley Nueva York.",
           "bonos": [
-            { "tk": "YM39O", "em": "YPF", "peso": 20 },
-            { "tk": "TSC3O", "em": "TGS", "peso": 20 },
-            { "tk": "NPCDO", "em": "CEPU", "peso": 15 },
-            { "tk": "VSCRO", "em": "VIST", "peso": 15 },
-            { "tk": "MGCUO", "em": "PAM", "peso": 15 },
-            { "tk": "PNXCO", "em": "PAE", "peso": 15 }
+            {
+              "tk": "YM39O",
+              "em": "YPF",
+              "peso": 20
+            },
+            {
+              "tk": "TSC3O",
+              "em": "TGS",
+              "peso": 20
+            },
+            {
+              "tk": "NPCDO",
+              "em": "CEPU",
+              "peso": 15
+            },
+            {
+              "tk": "VSCRO",
+              "em": "VIST",
+              "peso": 15
+            },
+            {
+              "tk": "MGCUO",
+              "em": "PAM",
+              "peso": 15
+            },
+            {
+              "tk": "PNXCO",
+              "em": "PAE",
+              "peso": 15
+            }
           ]
         },
         "barbell": {
           "lectura": "Mitad en bonos que vencen entre 2027 y 2029 y mitad en ley Nueva York de 2034 y 2035, todos del primer escalón. Misma duration de 3 años que el bullet.",
           "bonos": [
-            { "tk": "YM38O", "em": "YPF", "peso": 20 },
-            { "tk": "PN38O", "em": "PAE", "peso": 20 },
-            { "tk": "VSCPO", "em": "VIST", "peso": 10 },
-            { "tk": "TSC4O", "em": "TGS", "peso": 20 },
-            { "tk": "MGCOO", "em": "PAM", "peso": 20 },
-            { "tk": "VSCTO", "em": "VIST", "peso": 10 }
+            {
+              "tk": "YM38O",
+              "em": "YPF",
+              "peso": 20
+            },
+            {
+              "tk": "PN38O",
+              "em": "PAE",
+              "peso": 20
+            },
+            {
+              "tk": "VSCPO",
+              "em": "VIST",
+              "peso": 10
+            },
+            {
+              "tk": "TSC4O",
+              "em": "TGS",
+              "peso": 20
+            },
+            {
+              "tk": "MGCOO",
+              "em": "PAM",
+              "peso": 20
+            },
+            {
+              "tk": "VSCTO",
+              "em": "VIST",
+              "peso": 10
+            }
           ]
         }
       }
@@ -67,25 +147,81 @@
         "bullet": {
           "lectura": "Bonos ley Nueva York de 2031 a 2034 de los mejores emisores, más Telecom, Tecpetrol y Pluspetrol del segundo escalón. Duration de 4 años: si el riesgo país baja 100 pb, el precio sube cerca de 4%, y si sube, cae lo mismo.",
           "bonos": [
-            { "tk": "YM34O", "em": "YPF", "peso": 20 },
-            { "tk": "VSCVO", "em": "VIST", "peso": 15 },
-            { "tk": "TLCPO", "em": "TEO", "peso": 15 },
-            { "tk": "TTCAO", "em": "TECP", "peso": 15 },
-            { "tk": "PLC4O", "em": "PLC", "peso": 15 },
-            { "tk": "MGCMO", "em": "PAM", "peso": 10 },
-            { "tk": "TSC3O", "em": "TGS", "peso": 10 }
+            {
+              "tk": "YM34O",
+              "em": "YPF",
+              "peso": 20
+            },
+            {
+              "tk": "VSCVO",
+              "em": "VIST",
+              "peso": 15
+            },
+            {
+              "tk": "TLCPO",
+              "em": "TEO",
+              "peso": 15
+            },
+            {
+              "tk": "TTCAO",
+              "em": "TECP",
+              "peso": 15
+            },
+            {
+              "tk": "PLC4O",
+              "em": "PLC",
+              "peso": 15
+            },
+            {
+              "tk": "MGCMO",
+              "em": "PAM",
+              "peso": 10
+            },
+            {
+              "tk": "TSC3O",
+              "em": "TGS",
+              "peso": 10
+            }
           ]
         },
         "barbell": {
           "lectura": "Cuatro de cada diez dólares vencen en 2027 y 2028 y el resto va a bonos de 2035 a 2038. Misma duration de 4 años que el bullet, con más convexidad y con caja que vuelve pronto.",
           "bonos": [
-            { "tk": "YM38O", "em": "YPF", "peso": 15 },
-            { "tk": "PN38O", "em": "PAE", "peso": 15 },
-            { "tk": "TLCOO", "em": "TEO", "peso": 10 },
-            { "tk": "TSC4O", "em": "TGS", "peso": 15 },
-            { "tk": "TLCTO", "em": "TEO", "peso": 15 },
-            { "tk": "PLC7O", "em": "PLC", "peso": 15 },
-            { "tk": "VSCXO", "em": "VIST", "peso": 15 }
+            {
+              "tk": "YM38O",
+              "em": "YPF",
+              "peso": 15
+            },
+            {
+              "tk": "PN38O",
+              "em": "PAE",
+              "peso": 15
+            },
+            {
+              "tk": "TLCOO",
+              "em": "TEO",
+              "peso": 10
+            },
+            {
+              "tk": "TSC4O",
+              "em": "TGS",
+              "peso": 15
+            },
+            {
+              "tk": "TLCTO",
+              "em": "TEO",
+              "peso": 15
+            },
+            {
+              "tk": "PLC7O",
+              "em": "PLC",
+              "peso": 15
+            },
+            {
+              "tk": "VSCXO",
+              "em": "VIST",
+              "peso": 15
+            }
           ]
         }
       }
@@ -98,28 +234,102 @@
         "bullet": {
           "lectura": "Más de la mitad va a Edenor, CGC y PCR, los emisores que el modelo ve pagando más de lo que exige su riesgo, con balances más cargados. El resto ancla en YPF, Telecom y Tecpetrol, todo entre 2030 y 2034. Es la que más rinde y la que más depende de que esos tres sigan refinanciando.",
           "bonos": [
-            { "tk": "DNCAO", "em": "EDN", "peso": 20 },
-            { "tk": "CP38O", "em": "CGC", "peso": 20 },
-            { "tk": "LQC1O", "em": "PCR", "peso": 15 },
-            { "tk": "TLCPO", "em": "TEO", "peso": 15 },
-            { "tk": "TTCAO", "em": "TECP", "peso": 15 },
-            { "tk": "YMCJO", "em": "YPF", "peso": 15 }
+            {
+              "tk": "DNCAO",
+              "em": "EDN",
+              "peso": 20
+            },
+            {
+              "tk": "CP38O",
+              "em": "CGC",
+              "peso": 20
+            },
+            {
+              "tk": "LQC1O",
+              "em": "PCR",
+              "peso": 15
+            },
+            {
+              "tk": "TLCPO",
+              "em": "TEO",
+              "peso": 15
+            },
+            {
+              "tk": "TTCAO",
+              "em": "TECP",
+              "peso": 15
+            },
+            {
+              "tk": "YMCJO",
+              "em": "YPF",
+              "peso": 15
+            }
           ]
         },
         "barbell": {
           "lectura": "El riesgo de Edenor y CGC se toma en bonos cortos de 2027 y 2028, y el plazo largo se toma con YPF, Telecom, Vista y Pluspetrol en 2035 a 2038, más PCR en 2034. Si un emisor débil se complica, lo que se tiene de él vence antes.",
           "bonos": [
-            { "tk": "CP40O", "em": "CGC", "peso": 20 },
-            { "tk": "CP36O", "em": "CGC", "peso": 5 },
-            { "tk": "DNC5O", "em": "EDN", "peso": 15 },
-            { "tk": "LQC1O", "em": "PCR", "peso": 15 },
-            { "tk": "YM44O", "em": "YPF", "peso": 15 },
-            { "tk": "TLCTO", "em": "TEO", "peso": 15 },
-            { "tk": "VSCXO", "em": "VIST", "peso": 10 },
-            { "tk": "PLC7O", "em": "PLC", "peso": 5 }
+            {
+              "tk": "CP40O",
+              "em": "CGC",
+              "peso": 20
+            },
+            {
+              "tk": "CP36O",
+              "em": "CGC",
+              "peso": 5
+            },
+            {
+              "tk": "DNC5O",
+              "em": "EDN",
+              "peso": 15
+            },
+            {
+              "tk": "LQC1O",
+              "em": "PCR",
+              "peso": 15
+            },
+            {
+              "tk": "YM44O",
+              "em": "YPF",
+              "peso": 15
+            },
+            {
+              "tk": "TLCTO",
+              "em": "TEO",
+              "peso": 15
+            },
+            {
+              "tk": "VSCXO",
+              "em": "VIST",
+              "peso": 10
+            },
+            {
+              "tk": "PLC7O",
+              "em": "PLC",
+              "peso": 5
+            }
           ]
         }
       }
     }
-  ]
+  ],
+  "ingresos": {
+    "YPF": "dólares",
+    "PAE": "dólares",
+    "VIST": "dólares",
+    "TECP": "dólares",
+    "PLC": "dólares",
+    "CGC": "dólares",
+    "PCR": "dólares",
+    "PAM": "mixto",
+    "TGS": "mixto",
+    "CEPU": "mixto",
+    "AA2000": "mixto",
+    "EDN": "pesos",
+    "TEO": "pesos"
+  },
+  "lectura_ingresos": "Moneda de los ingresos, lectura de CEREBRO: «dólares» es petróleo y gas con precio en dólares y parte exportada; «mixto» combina ingresos en dólares (líquidos de exportación, contratos de generación o tarifas en dólares) con ingresos en pesos; «pesos» es tarifa o abono en pesos, así que el servicio en dólares depende de comprar en el MLC.",
+  "lectura_sector": "Vaca Muerta concentra a los emisores con más capacidad de pago y es la que genera los dólares del servicio: el peso en petróleo y gas es la fuente de la solidez de estas carteras. Lo que esos emisores comparten es el precio del petróleo y el riesgo país, y eso es lo que mueve a la cartera en conjunto.",
+  "liquidez": "Días para armar cada posición sin pasar del 20% del volumen diario promedio del bono, con el monto simulado."
 }

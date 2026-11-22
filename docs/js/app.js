@@ -1,8 +1,8 @@
 // STP (Sales Trader Personal): cierre de BYMA (docs/data, lo regenera la Action cada día hábil) + puntas en vivo de data912 y BYMA Data.
 // Comprar se mide a la punta vendedora (ask) y vender a la compradora (bid); para un bono que cobra CCL, la TIR de la
 // línea D supone canje cero al cobro. La TIR de cierre nunca se mezcla con el precio vivo.
-import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261121d";
-import { crearMotor } from "./pesos.js?v=20261121d";
+import { tir, vp, duration, convexidad, liquidacionHoy, alinear, dias, pase, fijarFeriados, habilDesde, flujosPrimaria, resolver, valorAl, redondearVN, vnValido } from "./calc.js?v=20261121e";
+import { crearMotor } from "./pesos.js?v=20261121e";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -1128,6 +1128,7 @@ async function pCarteras() {
   }
   const d = E.carteras, porTk = new Map(E.ons.map(b => [b.tk, b])), cal = E.emisores.emisores;
   const DEF = { monto: "100000", estructura: "bullet" };
+  const SECTOR = { "O&G": "Petróleo y gas", Utilities: "Generación y distribución", Telco: "Telecomunicaciones" };
   const f = filtro("carteras", DEF), monto = +String(f.monto).replace(/\./g, "").replace(",", ".") || 0;
   const est = f.estructura === "barbell" ? "barbell" : "bullet";
   const barra = barraFiltros("carteras", DEF,
@@ -1143,18 +1144,25 @@ async function pCarteras() {
       const fl = v?.flujos?.length ? v.flujos : b.calculable ? flujosHoy(b) : [];
       return { ...x, b, px, t, dm, vivo: !!v && v.fuente !== "cierre", q: cal[x.em]?.cualidades?.Promedio,
         cx: fl.length && t != null && !dudosa(t) ? convexidad(fl, t) : null,
-        ley: b.isin?.startsWith("AR") ? "ARG" : "NY", cc: b.cupon != null && px > 0 ? b.cupon * 100 / px : null };
+        ley: b.isin?.startsWith("AR") ? "ARG" : "NY", cc: b.cupon != null && px > 0 ? b.cupon * 100 / px : null,
+        sec: SECTOR[cal[x.em]?.sector] || cal[x.em]?.sector || "—", ing: d.ingresos?.[x.em] || "—",
+        dias: monto > 0 && b.vol > 0 ? monto * x.peso / 100 / (0.2 * b.vol) : null };
     });
     const ok = filas.filter(r => !r.falta), P = ok.reduce((s, r) => s + r.peso, 0) || 1;
     const prom = k => { const z = ok.filter(r => r[k] != null && isFinite(r[k]) && !(k === "t" && dudosa(r[k]))), w = z.reduce((s, r) => s + r.peso, 0); return w ? z.reduce((s, r) => s + r.peso * r[k], 0) / w : null; };
     const parte = g => ok.filter(g).reduce((s, r) => s + r.peso, 0) / P;
     return { filas, t: prom("t"), dm: prom("dm"), cx: prom("cx"), cc: prom("cc"), q: prom("q"),
-      ny: parte(r => r.ley === "NY"), cable: parte(r => r.b.cobra === "CCL"), corto: parte(r => r.dm != null && r.dm < 1.5) };
+      ny: parte(r => r.ley === "NY"), cable: parte(r => r.b.cobra === "CCL"), corto: parte(r => r.dm != null && r.dm < 1.5),
+      dol: parte(r => r.ing === "dólares"), pesos: parte(r => r.ing === "pesos"),
+      sectores: Object.entries(ok.reduce((m, r) => (m[r.sec] = (m[r.sec] || 0) + r.peso / P, m), {})).sort((a, b) => b[1] - a[1]),
+      lento: ok.filter(r => r.dias != null).sort((a, b) => b.dias - a.dias)[0] };
   };
   const cols = [
     { k: "em", t: "Emisor", f: r => `<span class="tk">${esc(r.em)}</span>`, v: r => r.em },
     { k: "tk", t: "ON", f: r => r.falta ? `${esc(r.tk)} <span class="aviso" title="No está en la base de hoy">⚠</span>` : esc(r.tk), v: r => r.tk },
     { k: "peso", t: "Peso", n: 1, f: r => `${num(r.peso, 0)}%`, v: r => r.peso },
+    { k: "sec", t: "Sector", cls: "ocultar-movil", f: r => esc(r.sec || "—"), v: r => r.sec },
+    { k: "ing", t: "Ingresos", cls: "ocultar-movil", titulo: "Moneda de los ingresos del emisor (lectura de CEREBRO)", f: r => esc(r.ing || "—"), v: r => r.ing },
     { k: "q", t: "Calidad", n: 1, titulo: "Promedio de cualidades del emisor (pestaña Emisores)", f: r => num(r.q, 0), v: r => r.q },
     { k: "ley", t: "Ley", f: r => r.falta ? "—" : esc(r.ley), v: r => r.ley },
     { k: "cobra", t: "Cobra", f: r => r.falta ? "—" : esc(r.b.cobra === "CCL" ? "cable" : "MEP"), v: r => r.b?.cobra },
@@ -1165,6 +1173,8 @@ async function pCarteras() {
     { k: "cx", t: "Convex.", n: 1, cls: "ocultar-movil", titulo: "Convexidad en años²", f: r => num(r.cx, 1), v: r => r.cx },
     { k: "cc", t: "Cupón corr.", n: 1, cls: "ocultar-movil", titulo: "Cupón anual sobre el precio", f: r => pct(r.cc), v: r => r.cc },
     { k: "cal", t: "Rating", cls: "ocultar-movil", titulo: "Solo escala global (la escala local AA o AAA no se muestra)", f: r => esc(global(r.b?.calificacion) || "—"), v: r => global(r.b?.calificacion) },
+    { k: "vol", t: "Vol. diario", n: 1, cls: "ocultar-movil", titulo: "Volumen diario promedio en US$ (BYMA)", f: r => r.falta || !(r.b.vol > 0) ? "—" : num(r.b.vol / 1e3, 0) + " k", v: r => r.b?.vol },
+    ...(monto > 0 ? [{ k: "dias", t: "Días", n: 1, titulo: "Días para armar la posición sin pasar del 20% del volumen diario", f: r => r.dias == null ? "—" : num(r.dias, 1), v: r => r.dias }] : []),
     ...(monto > 0 ? [{ k: "vn", t: "VN aprox.", n: 1, titulo: "Valor nominal para el monto simulado, al precio de la tabla, sin comisiones ni lámina", f: r => r.falta || !(r.px > 0) ? "—" : num(monto * r.peso / 100 / (r.px / 100), 0), v: r => r.px > 0 ? r.peso / r.px : null }] : []),
   ];
   const NOMBRE = { bullet: "Bullet", barbell: "Barbell" };
@@ -1175,16 +1185,18 @@ async function pCarteras() {
     const caja = document.createElement("section");
     caja.className = "tarjeta";
     caja.innerHTML = `<h4>${esc(c.nombre)} · ${esc(c.objetivo)} · ${NOMBRE[est]}</h4>
-      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}</div>
+      <div class="datos">${dato("TIR ponderada", pct(x.t))}${dato("Duration mod.", num(x.dm))}${dato("Convexidad", num(x.cx, 1))}${dato("Cupón corriente", pct(x.cc))}${dato("Calidad promedio", num(x.q, 0))}${dato("Ley NY", pct(x.ny, 0))}${dato("Cobra en cable", pct(x.cable, 0))}${dato("Ingresos en dólares", pct(x.dol, 0))}${dato("Ingresos en pesos", pct(x.pesos, 0))}${x.lento ? dato("Posición más lenta", `${esc(x.lento.tk)} · ${num(x.lento.dias, 1)} días`) : ""}</div>
       <p class="nota">${esc(c.variantes[est].lectura)}</p>
+      <p class="nota">Por sector: ${x.sectores.map(([k, w]) => `${esc(k)} ${pct(w, 0)}`).join(" · ")}.</p>
       <div class="tabla-caja"><table><thead><tr><th>Bullet vs barbell</th><th class="n">TIR</th><th class="n">DM</th><th class="n">Convex.</th><th class="n">Calidad</th><th class="n" title="Peso en bonos de duration menor a 1,5">Corto</th></tr></thead><tbody>${fila("bullet")}${fila("barbell")}</tbody></table></div>
-      ${dif == null ? "" : `<p class="nota">El barbell rinde <b>${num(Math.abs(dif), 0)} pb ${dif < 0 ? "menos" : "más"}</b> de TIR que el bullet con ${num(V.barbell.dm)} contra ${num(V.bullet.dm)} de duration, a cambio de ${num(V.barbell.cx - V.bullet.cx, 1)} de convexidad ${V.barbell.cx >= V.bullet.cx ? "extra" : "(menos)"}.</p>`}`;
+      ${dif == null ? "" : `<p class="nota">El barbell rinde <b>${num(Math.abs(dif), 0)} pb ${dif < 0 ? "menos" : "más"}</b> de TIR que el bullet con ${num(V.barbell.dm)} contra ${num(V.bullet.dm)} de duration, a cambio de ${num(V.barbell.cx - V.bullet.cx, 1)} de convexidad ${V.barbell.cx >= V.bullet.cx ? "extra" : "(menos)"}.${V.barbell.q != null && V.bullet.q != null && Math.abs(V.barbell.q - V.bullet.q) >= 2 ? ` La calidad promedio también cambia (${num(V.barbell.q, 0)} contra ${num(V.bullet.q, 0)}): parte de esa diferencia es riesgo de crédito, no solo convexidad.` : ""}</p>`}`;
     caja.append(tabla("cartera-" + c.id + "-" + est, x.filas, cols));
     return caja;
   });
   el.replaceChildren(barra,
     nota(`Armadas el ${fecha(d.armado)} · ${esc(d.reglas)} ${esc(d.base)} La TIR ponderada es el promedio por peso de las TIR de cada bono, una aproximación a la TIR de la cartera.`),
     nota(esc(d.estructuras)),
+    nota(`${esc(d.lectura_sector || "")} ${esc(d.lectura_ingresos || "")} ${esc(d.liquidez || "")}`),
     ...bloques,
     nota(`<b>${esc(d.aviso)}</b>`));
 }
