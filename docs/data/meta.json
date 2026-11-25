@@ -1,25 +1,23 @@
 {
- "cierre": "2026-11-20",
- "liquidacion": "2026-11-24",
- "caucion_tna": 0.1962,
- "generado": "2026-11-24T08:57:41+00:00",
+ "cierre": "2026-11-24",
+ "liquidacion": "2026-11-25",
+ "caucion_tna": 0.2009,
+ "generado": "2026-11-25T07:57:51+00:00",
  "fuente": {
   "mercado": "https://tablero.bymaeduca.com.ar/",
   "cobro": "chamomberg.com > ISIN > BYMA",
   "vivo": "data912.com (lo pide el navegador)"
  },
  "conteos": {
-  "ons.json": 221,
-  "pagos.json": 1940,
+  "ons.json": 222,
+  "pagos.json": 1941,
   "soberanos.json": 36,
   "pesos.json": 44
  },
  "ons_chamomberg": 140,
  "sin_flujos": [],
  "flujos_cronograma": [
-  "BPCUO",
-  "LR7BO",
-  "SNSDO"
+  "LR7BO"
  ],
  "flujos_chamomberg": [
   "RC7CO",
@@ -58,25 +56,25 @@
   "n": 21
  },
  "tesoro": {
-  "fecha": "2026-11-20",
+  "fecha": "2026-11-24",
   "fuente": "U.S. Treasury, par yield curve",
   "convencion": "efectiva anual (desde la tasa par semestral)",
   "curva": [
    [
     0.08333333333333333,
-    0.04234
+    0.04254
    ],
    [
     0.25,
-    0.04367
+    0.04408
    ],
    [
     0.5,
-    0.04428
+    0.0451
    ],
    [
     1,
-    0.04561
+    0.04643
    ],
    [
     2,
@@ -84,27 +82,27 @@
    ],
    [
     3,
-    0.04704
+    0.04725
    ],
    [
     5,
-    0.04765
+    0.04745
    ],
    [
     7,
-    0.04858
+    0.04847
    ],
    [
     10,
-    0.04981
+    0.0497
    ],
    [
     20,
-    0.05411
+    0.05401
    ],
    [
     30,
-    0.0538
+    0.0537
    ]
   ]
  }
